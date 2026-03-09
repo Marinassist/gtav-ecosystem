@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <title>GTA V ECOSYSTEM</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+        :root{--bg:#0b0f1a;--card:#161d2f;--card2:#1c2540;--border:#1e293b;--amber:#d97706;--red:#dc2626;--green:#22c55e;--blue:#3b82f6;--cyan:#06b6d4;--purple:#a855f7;--yellow:#eab308;--orange:#f97316;--text:#e2e8f0;--muted:#64748b;--sidebar-w:260px}
+        *{margin:0;padding:0;box-sizing:border-box}html{scroll-behavior:smooth}body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif}
+        .mono{font-family:'JetBrains Mono',monospace}
+
+        /* LOGIN OVERLAY */
+        #loginOverlay{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;align-items:center;justify-content:center}
+        #loginOverlay.hidden{display:none}
+        .login-card{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:48px 40px;max-width:460px;width:100%;position:relative;overflow:hidden;box-shadow:0 0 80px rgba(0,0,0,0.5)}
+        .login-card::before{content:'V';position:absolute;top:-30px;right:-20px;font-size:200px;font-weight:900;font-style:italic;color:rgba(217,119,6,0.03);pointer-events:none}
+        .login-tabs{display:flex;background:var(--bg);border-radius:12px;padding:4px;margin-bottom:32px;border:1px solid var(--border)}
+        .login-tab{flex:1;padding:12px;text-align:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;border-radius:10px;cursor:pointer;transition:.3s;color:var(--muted);border:none;background:none}
+        .login-tab.active{background:var(--amber);color:#0b0f1a}
+        .form-group{margin-bottom:18px}.form-label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--muted);margin-bottom:8px}
+        .form-input,.form-select{width:100%;padding:12px 16px;background:var(--card2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:Inter;outline:none;transition:.2s}
+        .form-input:focus,.form-select:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(217,119,6,0.1)}
+        .form-input::placeholder{color:#334155}
+        .btn-login{width:100%;padding:16px;background:linear-gradient(135deg,#d97706,#b45309);color:#0b0f1a;border:none;border-radius:14px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:3px;cursor:pointer;transition:.3s}
+        .btn-login:hover{transform:translateY(-1px);box-shadow:0 8px 30px rgba(217,119,6,0.3)}
+        .register-extra{max-height:0;overflow:hidden;transition:.4s;opacity:0}.register-extra.show{max-height:200px;opacity:1}
+
+        /* MODE BAR */
+        #modeBar{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(11,15,26,0.95);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);display:none;padding:0 16px;height:48px;align-items:center;gap:4px;overflow-x:auto}
+        #modeBar.show{display:flex}
+        .mode-btn{padding:8px 16px;border-radius:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;cursor:pointer;transition:.2s;border:none;background:none;color:var(--muted);white-space:nowrap}
+        .mode-btn:hover{color:var(--text)}.mode-btn.active{color:white}
+        .mode-btn[data-mode="citoyen"].active{background:rgba(217,119,6,0.2);color:var(--amber)}
+        .mode-btn[data-mode="gouv"].active{background:rgba(220,38,38,0.2);color:var(--red)}
+        .mode-btn[data-mode="ems"].active{background:rgba(6,182,212,0.2);color:var(--cyan)}
+        .mode-btn[data-mode="taxi"].active{background:rgba(234,179,8,0.2);color:var(--yellow)}
+        .mode-btn[data-mode="mecano"].active{background:rgba(249,115,22,0.2);color:var(--orange)}
+        .mode-btn[data-mode="staff"].active{background:rgba(168,85,247,0.2);color:var(--purple)}
+
+        /* LAYOUT */
+        .app{display:none}.app.show{display:flex;min-height:100vh;padding-top:48px}
+        .sidebar{position:fixed;top:48px;left:0;bottom:0;width:var(--sidebar-w);background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:50;overflow-y:auto}
+        .sidebar-header{padding:20px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+        .sidebar-logo{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;flex-shrink:0}
+        .sidebar-nav{flex:1;overflow-y:auto;padding:12px 10px}
+        .nav-sec{margin-bottom:20px}.nav-sec-t{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2.5px;color:#334155;padding:0 12px;margin-bottom:6px}
+        .nav-i{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:.2s;font-size:12px;font-weight:500;color:var(--muted)}
+        .nav-i:hover{background:rgba(255,255,255,0.03);color:var(--text)}.nav-i.active{font-weight:700}
+        .nav-i .ic{width:18px;text-align:center;font-size:14px}.nav-i .bg{margin-left:auto;font-size:9px;font-weight:700;padding:2px 7px;border-radius:8px;color:white}
+
+        .main-content{margin-left:var(--sidebar-w);flex:1;min-height:calc(100vh - 48px)}
+        .topbar{position:sticky;top:48px;z-index:40;padding:16px 28px;background:rgba(11,15,26,0.9);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+        .topbar-t{font-size:18px;font-weight:900;text-transform:uppercase;font-style:italic}
+        .topbar-b{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-top:2px}
+        .cnt{padding:28px}
+
+        .pg{display:none;animation:fadeIn .25s ease}.pg.active{display:block}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+
+        /* SHARED COMPONENTS */
+        .stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:28px}
+        .st-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px}
+        .st-icon{font-size:22px;margin-bottom:8px}.st-val{font-size:26px;font-weight:900}.st-lab{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-top:4px}
+        .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+        .card-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+        .card-t{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:1px}
+        .li{display:flex;align-items:center;gap:14px;padding:12px;border-radius:10px;transition:.2s}.li:hover{background:rgba(255,255,255,0.02)}
+        .li-ic{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+        .li-c{flex:1;min-width:0}.li-t{font-size:12px;font-weight:700}.li-s{font-size:10px;color:var(--muted);margin-top:2px}
+        .li-r{text-align:right;flex-shrink:0}.li-a{font-size:13px;font-weight:800}
+
+        .st{font-size:9px;font-weight:700;padding:3px 8px;border-radius:5px;text-transform:uppercase;display:inline-block}
+        .st-g{background:rgba(34,197,94,0.1);color:#22c55e}.st-r{background:rgba(220,38,38,0.1);color:#ef4444}.st-a{background:rgba(217,119,6,0.1);color:#f59e0b}.st-b{background:rgba(59,130,246,0.1);color:#3b82f6}.st-p{background:rgba(168,85,247,0.1);color:#a855f7}.st-c{background:rgba(6,182,212,0.1);color:#06b6d4}.st-gr{background:rgba(100,116,139,0.1);color:#94a3b8}
+
+        .btn{padding:8px 16px;border-radius:8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;cursor:pointer;transition:.2s;border:none}
+        .btn:hover{transform:translateY(-1px)}.btn-s{padding:6px 12px;font-size:9px}
+        .btn-amb{background:var(--amber);color:#0b0f1a}.btn-red{background:var(--red);color:white}.btn-grn{background:var(--green);color:black}.btn-cyn{background:var(--cyan);color:black}.btn-ylw{background:var(--yellow);color:black}.btn-org{background:var(--orange);color:black}.btn-pur{background:var(--purple);color:white}
+        .btn-gh{background:var(--card2);color:var(--text);border:1px solid var(--border)}.btn-gh:hover{border-color:var(--amber)}
+
+        .search-b{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin-bottom:16px}
+        .search-b:focus-within{border-color:var(--amber)}.search-b input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:12px;font-family:Inter}
+
+        .tab-b{display:flex;gap:3px;background:var(--bg);border-radius:10px;padding:3px;margin-bottom:20px;border:1px solid var(--border);overflow-x:auto}
+        .tab-i{padding:8px 14px;border-radius:8px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;cursor:pointer;transition:.2s;border:none;background:none;color:var(--muted);white-space:nowrap}
+        .tab-i.active{font-weight:700;color:white}
+
+        /* LOG TERMINAL */
+        .log-t{background:#000;border:1px solid var(--border);border-radius:12px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.8;max-height:400px;overflow-y:auto;color:#8b949e}
+        .log-t .lt{color:#484f58}.log-t .li-info{color:#58a6ff}.log-t .li-warn{color:#d29922}.log-t .li-err{color:#f85149}.log-t .li-ok{color:#3fb950}.log-t .li-pur{color:#bc8cff}
+
+        .god-ban{background:linear-gradient(135deg,rgba(168,85,247,0.08),rgba(147,51,234,0.04));border:1px solid rgba(168,85,247,0.2);border-radius:12px;padding:12px 20px;display:flex;align-items:center;gap:12px;margin-bottom:20px}
+        .pulse-dot{width:10px;height:10px;border-radius:50%;animation:pulse 2s infinite}
+        @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,0.4)}50%{box-shadow:0 0 0 8px rgba(168,85,247,0)}}
+        .pulse-red-dot{animation:pulseR 2s infinite}@keyframes pulseR{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,0.4)}50%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}
+        .bed{padding:14px;border-radius:12px;border:1px solid var(--border);background:var(--card);text-align:center;cursor:pointer;transition:.2s}
+        .bed:hover{border-color:var(--cyan)}.bed.occ{border-color:rgba(220,38,38,0.3);background:rgba(220,38,38,0.03)}.bed.free{border-color:rgba(34,197,94,0.3);background:rgba(34,197,94,0.03)}
+        .gauge{width:100%;height:6px;background:var(--card2);border-radius:3px;overflow:hidden;margin-top:4px}.gauge-f{height:100%;border-radius:3px}
+        .classified{background:repeating-linear-gradient(45deg,rgba(220,38,38,0.03),rgba(220,38,38,0.03) 10px,transparent 10px,transparent 20px);border:1px solid rgba(220,38,38,0.15);border-radius:10px;padding:10px 16px;text-align:center;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:3px;color:#ef4444;margin-bottom:20px}
+
+        .mode-citoyen .nav-i.active{background:rgba(217,119,6,0.1);color:var(--amber)}
+        .mode-gouv .nav-i.active{background:rgba(220,38,38,0.1);color:var(--red)}
+        .mode-ems .nav-i.active{background:rgba(6,182,212,0.1);color:var(--cyan)}
+        .mode-ems .tab-i.active{background:var(--cyan);color:black}
+        .mode-taxi .nav-i.active{background:rgba(234,179,8,0.1);color:var(--yellow)}
+        .mode-taxi .tab-i.active{background:var(--yellow);color:black}
+        .mode-mecano .nav-i.active{background:rgba(249,115,22,0.1);color:var(--orange)}
+        .mode-mecano .tab-i.active{background:var(--orange);color:black}
+        .mode-staff .nav-i.active{background:rgba(168,85,247,0.1);color:var(--purple)}
+        .mode-staff .tab-i.active{background:var(--purple)}
+        .mode-citoyen .tab-i.active{background:var(--amber);color:black}
+        .mode-gouv .tab-i.active{background:var(--red)}
+
+        @media(max-width:900px){
+            .sidebar{display:none}.main-content{margin-left:0}
+        }
+        .biz-panel{display:none;animation:fadeIn .25s ease}.biz-panel.active{display:block}
+        .biz-sel:hover{color:var(--text) !important}
+    </style>
+</head>
+<body>
+
+<!-- ═══ LOGIN OVERLAY ═══ -->
+<div id="loginOverlay">
+    <div class="login-card">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:36px">
+            <div style="width:48px;height:48px;background:linear-gradient(135deg,#d97706,#b45309);border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:20px;color:#0b0f1a;">V</div>
+            <div><div style="font-size:18px;font-weight:900;font-style:italic;text-transform:uppercase;">GTA V Ecosystem</div><div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:3px;margin-top:3px;">Portail Sécurisé</div></div>
+        </div>
+        <div class="login-tabs">
+            <button class="login-tab active" onclick="switchLoginTab('login')">Connexion</button>
+            <button class="login-tab" onclick="switchLoginTab('register')">Inscription</button>
+        </div>
+        <div id="loginMsg" style="display:none;padding:12px 16px;border-radius:10px;font-size:11px;font-weight:600;margin-bottom:16px;"></div>
+        <div class="register-extra" id="regExtra">
+            <div class="form-group"><label class="form-label">Prénom & Nom RP</label><input class="form-input" id="rpName" placeholder="Ex : John Martinez"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Adresse e-mail</label><input class="form-input" id="email" placeholder="citoyen@lossantos.com" type="email"></div>
+        <div class="form-group"><label class="form-label">Mot de passe</label><input class="form-input" id="password" placeholder="••••••••••" type="password"></div>
+        <div class="register-extra" id="regExtra2">
+            <div class="form-group"><label class="form-label">Confirmer le mot de passe</label><input class="form-input" id="confirmPw" placeholder="••••••••••" type="password"></div>
+        </div>
+        <button class="btn-login" id="loginBtn" onclick="doLogin()">Se Connecter</button>
+        <div style="text-align:center;margin-top:20px;font-size:11px;color:var(--muted);" id="loginFooter">Pas encore de compte ? <a href="#" style="color:var(--amber);font-weight:700;text-decoration:none;" onclick="switchLoginTab('register');return false;">Créer un accès</a></div>
+        <div style="text-align:center;margin-top:20px;padding-top:16px;border-top:1px solid var(--border);"><p style="font-size:7px;text-transform:uppercase;letter-spacing:4px;color:#334155;">Gouvernement de Los Santos • Connexion Sécurisée</p></div>
+    </div>
+</div>
+
+
+<!-- ═══ MODE BAR (3 modes) ═══ -->
+<div id="modeBar">
+    <div style="display:flex;align-items:center;gap:10px;margin-right:16px;">
+        <div style="width:28px;height:28px;background:linear-gradient(135deg,#d97706,#b45309);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;color:#0b0f1a;">V</div>
+        <span style="font-size:12px;font-weight:900;font-style:italic;text-transform:uppercase;">GTA V</span>
+    </div>
+    <button class="mode-btn active" data-mode="citoyen" onclick="switchMode('citoyen')">👤 Citoyen</button>
+    <button class="mode-btn" data-mode="gouv" onclick="switchMode('gouv')">🏛️ Gouvernement</button>
+    <button class="mode-btn" data-mode="staff" onclick="switchMode('staff')">⚡ Staff</button>
+    <div style="margin-left:auto;"><button class="btn btn-s btn-gh" onclick="doLogout()">⏻</button></div>
+</div>
+
+<!-- ═══ APP ═══ -->
+<div id="app" class="app">
+
+<!-- SIDEBAR: CITOYEN -->
+<div class="sidebar" id="sb-citoyen" data-sb="citoyen">
+    <div class="sidebar-header"><div class="sidebar-logo" style="background:linear-gradient(135deg,#d97706,#b45309);color:#0b0f1a;">V</div><div><div style="font-size:14px;font-weight:900;font-style:italic;text-transform:uppercase;">Ecosystem</div><div style="font-size:7px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;margin-top:2px;">Espace Citoyen</div></div></div>
+    <nav class="sidebar-nav">
+        <div class="nav-sec"><div class="nav-sec-t">Principal</div>
+            <div class="nav-i active" onclick="goTo('citoyen','c-dash',this)"><span class="ic">🏠</span>Tableau de Bord</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-msg',this)"><span class="ic">📭</span>Messagerie<span class="bg" style="background:var(--red);">3</span></div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Finances</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-fact',this)"><span class="ic">📑</span>Factures</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-loyer',this)"><span class="ic">🏠</span>Loyers</div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Vie Citoyenne</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-rdv',this)"><span class="ic">📅</span>RDV</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-sante',this)"><span class="ic">🏥</span>Carnet Santé</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-lic',this)"><span class="ic">🪪</span>Licences</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-cand',this)"><span class="ic">💼</span>Candidatures</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-vote',this)"><span class="ic">🗳️</span>Vote<span class="bg" style="background:var(--blue);">1</span></div>
+            <div class="nav-i" onclick="goTo('citoyen','c-lois',this)"><span class="ic">⚖️</span>Lois & Justice</div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Emploi & Entreprises</div>
+            <div class="nav-i" onclick="goTo('citoyen','c-emploi',this)"><span class="ic">👔</span>Mon Emploi</div>
+        </div>
+    </nav>
+</div>
+
+<!-- SIDEBAR: GOUVERNEMENT -->
+<div class="sidebar" id="sb-gouv" data-sb="gouv" style="display:none;">
+    <div class="sidebar-header"><div class="sidebar-logo" style="background:linear-gradient(135deg,#dc2626,#991b1b);color:white;font-size:11px;">GOV</div><div><div style="font-size:14px;font-weight:900;font-style:italic;text-transform:uppercase;">Gouvernement</div><div style="font-size:7px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;">Los Santos</div></div></div>
+    <nav class="sidebar-nav">
+        <div class="nav-sec"><div class="nav-sec-t">Commandes</div>
+            <div class="nav-i active" onclick="goTo('gouv','g-dash',this)"><span class="ic">📊</span>Dashboard</div>
+            <div class="nav-i" onclick="goTo('gouv','g-biz',this)"><span class="ic">🏢</span>Créer Entreprise</div>
+            <div class="nav-i" onclick="goTo('gouv','g-fisc',this)"><span class="ic">💰</span>Fiscalité<span class="bg" style="background:var(--red);">3</span></div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Documents</div>
+            <div class="nav-i" onclick="goTo('gouv','g-coffre',this)"><span class="ic">🔒</span>Coffre-Fort<span class="bg" style="background:var(--blue);">5</span></div>
+            <div class="nav-i" onclick="goTo('gouv','g-lois',this)"><span class="ic">⚖️</span>Gestion Lois</div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Citoyens</div>
+            <div class="nav-i" onclick="goTo('gouv','g-cit',this)"><span class="ic">👥</span>Base Citoyens</div>
+            <div class="nav-i" onclick="goTo('gouv','g-casier',this)"><span class="ic">🚔</span>Casiers</div>
+            <div class="nav-i" onclick="goTo('gouv','g-plaque',this)"><span class="ic">🚗</span>Plaques</div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Communication</div>
+            <div class="nav-i" onclick="goTo('gouv','g-comm',this)"><span class="ic">📢</span>Communiqués</div>
+            <div class="nav-i" onclick="goTo('gouv','g-votes',this)"><span class="ic">🗳️</span>Votes</div>
+        </div>
+    </nav>
+</div>
+
+<!-- SIDEBAR: STAFF -->
+<div class="sidebar" id="sb-staff" data-sb="staff" style="display:none;">
+    <div class="sidebar-header"><div class="sidebar-logo" style="background:linear-gradient(135deg,#a855f7,#7c3aed);color:white;font-size:16px;">⚡</div><div><div style="font-size:14px;font-weight:900;font-style:italic;text-transform:uppercase;">Panel Staff</div><div style="font-size:7px;color:var(--purple);text-transform:uppercase;letter-spacing:2px;">God Mode</div></div></div>
+    <nav class="sidebar-nav">
+        <div class="nav-sec"><div class="nav-sec-t">Surveillance</div>
+            <div class="nav-i active" onclick="goTo('staff','s-dash',this)"><span class="ic">📊</span>Dashboard</div>
+            <div class="nav-i" onclick="goTo('staff','s-logs',this)"><span class="ic">📜</span>Logs</div>
+            <div class="nav-i" onclick="goTo('staff','s-live',this)"><span class="ic">🔴</span>Live</div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Comptes</div>
+            <div class="nav-i" onclick="goTo('staff','s-comptes',this)"><span class="ic">👥</span>Comptes</div>
+            <div class="nav-i" onclick="goTo('staff','s-bans',this)"><span class="ic">🚫</span>Bans<span class="bg" style="background:var(--red);">2</span></div>
+        </div>
+        <div class="nav-sec"><div class="nav-sec-t">Serveur</div>
+            <div class="nav-i" onclick="goTo('staff','s-serv',this)"><span class="ic">🖥️</span>Serveur</div>
+            <div class="nav-i" onclick="goTo('staff','s-purge',this)"><span class="ic">🧹</span>Auto-Purge</div>
+        </div>
+    </nav>
+</div>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<div class="main-content">
+    <div class="topbar">
+        <div><div class="topbar-t" id="topTitle">🏠 Tableau de Bord</div><div class="topbar-b" id="topBread">Espace Citoyen › Vue d'ensemble</div></div>
+        <div id="topBadge" style="padding:6px 12px;border-radius:8px;background:rgba(217,119,6,0.1);border:1px solid rgba(217,119,6,0.2);font-size:9px;font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:1.5px;">👤 Citoyen</div>
+    </div>
+    <div class="cnt">
+
+<!-- ═══ CITOYEN PAGES ═══ -->
+<div class="pg active" id="c-dash">
+    <div class="stats-row">
+        <div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">📭</div><div class="st-val" style="color:var(--amber)">3</div><div class="st-lab">Messages non lus</div></div>
+        <div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">📑</div><div class="st-val" style="color:var(--red)">$1,250</div><div class="st-lab">Factures en attente</div></div>
+        <div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">📅</div><div class="st-val" style="color:var(--blue)">2</div><div class="st-lab">RDV cette semaine</div></div>
+        <div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">🗳️</div><div class="st-val" style="color:var(--green)">1</div><div class="st-lab">Vote en cours</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="card"><div class="card-h"><span class="card-t">📭 Messages récents</span></div><div class="li"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🏛️</div><div class="li-c"><div class="li-t">Gouvernement</div><div class="li-s">Rappel : Déclaration fiscale</div></div></div><div class="li"><div class="li-ic" style="background:rgba(59,130,246,0.1)">🏥</div><div class="li-c"><div class="li-t">SAMS</div><div class="li-s">Confirmation RDV — 14h</div></div></div><div class="li"><div class="li-ic" style="background:rgba(217,119,6,0.1)">🍔</div><div class="li-c"><div class="li-t">Burger Shot</div><div class="li-s">Candidature retenue !</div></div></div></div>
+        <div class="card"><div class="card-h"><span class="card-t">🪪 Documents</span></div><div class="li"><div class="li-ic" style="background:rgba(34,197,94,0.1)">🚗</div><div class="li-c"><div class="li-t">Permis de Conduire</div><div class="li-s">Exp. 30/12/2025</div></div><div class="li-r"><span class="st st-g">Valide</span></div></div><div class="li"><div class="li-ic" style="background:rgba(217,119,6,0.1)">🔫</div><div class="li-c"><div class="li-t">Port d'Arme</div><div class="li-s">Exp. 01/05/2025</div></div><div class="li-r"><span class="st st-a">Bientôt</span></div></div></div>
+    </div>
+</div>
+<div class="pg" id="c-msg"><div class="card"><div class="card-h"><span class="card-t">📭 Messagerie</span></div><div class="li" style="border-left:3px solid var(--red);margin-bottom:8px"><div class="li-c"><div class="li-t">🏛️ Gouvernement</div><div class="li-s">Rappel déclaration fiscale.</div></div><div class="li-r"><span class="st st-r">Non lu</span></div></div><div class="li" style="border-left:3px solid var(--blue);margin-bottom:8px"><div class="li-c"><div class="li-t">🏥 SAMS</div><div class="li-s">RDV confirmé 14h00.</div></div><div class="li-r"><span class="st st-r">Non lu</span></div></div><div class="li" style="border-left:3px solid var(--amber)"><div class="li-c"><div class="li-t">🍔 Burger Shot</div><div class="li-s">Candidature retenue ! Entretien demain.</div></div><div class="li-r"><span class="st st-g">Lu</span></div></div></div></div>
+<div class="pg" id="c-fact"><div class="card"><div class="card-h"><span class="card-t">📑 Factures</span></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🏛️</div><div class="li-c"><div class="li-t">Amende excès de vitesse</div><div class="li-s">Gouvernement • $750</div></div><div class="li-r"><span class="st st-r">Impayée</span></div></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:8px"><div class="li-ic" style="background:rgba(217,119,6,0.1)">🍔</div><div class="li-c"><div class="li-t">Menu Mega Shot</div><div class="li-s">Burger Shot • $45</div></div><div class="li-r"><span class="st st-a">Attente</span></div></div><div class="li"><div class="li-ic" style="background:rgba(59,130,246,0.1)">🏥</div><div class="li-c"><div class="li-t">Consultation</div><div class="li-s">SAMS • $200</div></div><div class="li-r"><span class="st st-g">Payée</span></div></div></div></div>
+<div class="pg" id="c-loyer"><div class="card" style="border-left:3px solid var(--green)"><div style="display:flex;justify-content:space-between;margin-bottom:16px"><div><h3 style="font-size:16px;font-weight:900;text-transform:uppercase">🏢 Apt. Alta Street #4B</h3><p style="font-size:10px;color:var(--muted)">$800/mois • Échéance 5j</p></div><span class="st st-g">🟢 Payé</span></div></div></div>
+<div class="pg" id="c-rdv"><div class="card"><div class="card-h"><span class="card-t">📅 Rendez-vous</span></div><div class="li" style="border-left:3px solid var(--blue);margin-bottom:10px"><div class="li-ic" style="background:rgba(59,130,246,0.1)">🏥</div><div class="li-c"><div class="li-t">Bilan Médical — SAMS</div><div class="li-s">Dr. Rivera</div></div><div class="li-r"><div style="font-weight:800;color:var(--blue)">Aujourd'hui 14h</div></div></div><div class="li" style="border-left:3px solid var(--amber)"><div class="li-ic" style="background:rgba(217,119,6,0.1)">🍔</div><div class="li-c"><div class="li-t">Entretien — Burger Shot</div></div><div class="li-r"><div style="font-weight:800;color:var(--amber)">Demain 10h</div></div></div></div></div>
+<div class="pg" id="c-sante"><div style="background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.15);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:11px;color:var(--blue)">ℹ️ <strong>Lecture seule</strong> — Seuls les EMS modifient votre dossier.</div><div class="card"><div class="card-h"><span class="card-t">🏥 Hospitalisations</span></div><div class="li" style="margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🚑</div><div class="li-c"><div class="li-t">Blessure par balle — Épaule</div><div class="li-s">Dr. Rivera • 02/03</div></div><div class="li-r"><span class="st st-g">Rétabli</span></div></div></div></div>
+<div class="pg" id="c-lic"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px"><div class="card" style="border-top:3px solid var(--green)"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><span style="font-size:28px">🪪</span><span class="st st-g">Valide</span></div><h3 style="font-size:16px;font-weight:900;text-transform:uppercase">Carte d'Identité</h3><p style="font-size:10px;color:var(--muted)">N° LS-2025-48172</p></div><div class="card" style="border-top:3px solid var(--green)"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><span style="font-size:28px">🚗</span><span class="st st-g">Valide</span></div><h3 style="font-size:16px;font-weight:900;text-transform:uppercase">Permis</h3><p style="font-size:10px;color:var(--muted)">Cat. B • 30/12/2025</p></div><div class="card" style="border-top:3px solid var(--amber)"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><span style="font-size:28px">🔫</span><span class="st st-a">Expire bientôt</span></div><h3 style="font-size:16px;font-weight:900;text-transform:uppercase">Port d'Arme</h3><p style="font-size:10px;color:var(--muted)">Type II • 01/05/2025</p><button class="btn btn-amb btn-s" style="width:100%;margin-top:10px">Renouveler</button></div></div></div>
+<div class="pg" id="c-cand"><div class="card"><div class="card-h"><span class="card-t">💼 Candidatures</span></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:8px"><div class="li-ic" style="background:rgba(217,119,6,0.1)">🍔</div><div class="li-c"><div class="li-t">Burger Shot — Équipier</div></div><div class="li-r"><span class="st st-g">Entretien ✓</span></div></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:8px"><div class="li-ic" style="background:rgba(59,130,246,0.1)">🏥</div><div class="li-c"><div class="li-t">SAMS — Ambulancier</div></div><div class="li-r"><span class="st st-a">Attente</span></div></div><div class="li"><div class="li-ic" style="background:rgba(234,179,8,0.1)">🚕</div><div class="li-c"><div class="li-t">Duvet Transport</div></div><div class="li-r"><span class="st st-r">Refusé</span></div></div></div></div>
+<div class="pg" id="c-vote"><div class="card" style="border-left:3px solid var(--blue)"><div class="card-h"><span class="card-t">🗳️ Élection du Maire</span><span class="st st-b">En cours</span></div><div onclick="this.style.border='1px solid var(--amber)';this.style.background='rgba(217,119,6,0.05)'" style="padding:12px 16px;border-radius:10px;border:1px solid var(--border);margin-bottom:8px;cursor:pointer">Carlos Mendez — Progressiste</div><div onclick="this.style.border='1px solid var(--amber)';this.style.background='rgba(217,119,6,0.05)'" style="padding:12px 16px;border-radius:10px;border:1px solid var(--border);margin-bottom:8px;cursor:pointer">Amanda Truffaut — Sécuritaire</div><button class="btn btn-amb" style="width:100%;margin-top:12px" onclick="alert('✅ Vote enregistré !')">Confirmer</button></div></div>
+<div class="pg" id="c-lois"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px"><div class="card" style="border-left:3px solid var(--amber);cursor:pointer;padding:16px"><div style="font-size:22px;margin-bottom:6px">⚖️</div><div style="font-weight:800;font-size:11px;text-transform:uppercase">Constitution</div></div><div class="card" style="border-left:3px solid var(--red);cursor:pointer;padding:16px"><div style="font-size:22px;margin-bottom:6px">🚔</div><div style="font-weight:800;font-size:11px;text-transform:uppercase">Code Pénal</div></div><div class="card" style="border-left:3px solid var(--blue);cursor:pointer;padding:16px"><div style="font-size:22px;margin-bottom:6px">🚗</div><div style="font-weight:800;font-size:11px;text-transform:uppercase">Code Route</div></div><div class="card" style="border-left:3px solid var(--purple);cursor:pointer;padding:16px"><div style="font-size:22px;margin-bottom:6px">🏢</div><div style="font-weight:800;font-size:11px;text-transform:uppercase">Droit Civil</div></div></div><div class="card"><div class="card-h"><span class="card-t">🚔 Code Pénal</span></div><div style="padding:10px;background:var(--bg);border-radius:8px;margin-bottom:6px;border-left:2px solid var(--red)"><div style="font-weight:800;font-size:11px">Art. 1 — Vol simple</div><p style="font-size:10px;color:var(--muted)">$250 • 15min</p></div><div style="padding:10px;background:var(--bg);border-radius:8px;margin-bottom:6px;border-left:2px solid var(--red)"><div style="font-weight:800;font-size:11px">Art. 2 — Vol aggravé</div><p style="font-size:10px;color:var(--muted)">$1,000 • 30min</p></div><div style="padding:10px;background:var(--bg);border-radius:8px;border-left:2px solid var(--amber)"><div style="font-weight:800;font-size:11px">Art. 3 — Excès de vitesse</div><p style="font-size:10px;color:var(--muted)">$500 • Retrait permis 24h</p></div></div></div>
+
+<!-- ═══════════════════════════════════════════════════ -->
+<!--   EMPLOI HUB — TOUTES LES ENTREPRISES EN SOUS-TAB -->
+<!-- ═══════════════════════════════════════════════════ -->
+<div class="pg" id="c-emploi">
+    <!-- Business type selector -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:14px;">
+        <button class="biz-sel active" data-biz="biz-resto" onclick="switchBiz(this,'biz-resto')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:var(--amber);color:black;transition:.2s;white-space:nowrap;">🍔 Restaurant</button>
+        <button class="biz-sel" data-biz="biz-ems" onclick="switchBiz(this,'biz-ems')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:none;color:var(--muted);transition:.2s;white-space:nowrap;">🏥 EMS</button>
+        <button class="biz-sel" data-biz="biz-taxi" onclick="switchBiz(this,'biz-taxi')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:none;color:var(--muted);transition:.2s;white-space:nowrap;">🚕 Taxi</button>
+        <button class="biz-sel" data-biz="biz-mecano" onclick="switchBiz(this,'biz-mecano')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:none;color:var(--muted);transition:.2s;white-space:nowrap;">🔧 Mécano</button>
+        <button class="biz-sel" data-biz="biz-immo" onclick="switchBiz(this,'biz-immo')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:none;color:var(--muted);transition:.2s;white-space:nowrap;">🏠 Immobilier</button>
+        <button class="biz-sel" data-biz="biz-ltd" onclick="switchBiz(this,'biz-ltd')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:none;color:var(--muted);transition:.2s;white-space:nowrap;">🏪 LTD</button>
+        <button class="biz-sel" data-biz="biz-club" onclick="switchBiz(this,'biz-club')" style="padding:10px 16px;border-radius:10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;cursor:pointer;border:none;background:none;color:var(--muted);transition:.2s;white-space:nowrap;">🎵 Nightclub</button>
+    </div>
+
+    <!-- ═══ RESTAURANT ═══ -->
+    <div class="biz-panel active" id="biz-resto">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">🛒</div><div class="st-val" style="color:var(--amber)">87</div><div class="st-lab">Ventes semaine</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$12,450</div><div class="st-lab">CA Semaine</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">👥</div><div class="st-val" style="color:var(--blue)">4</div><div class="st-lab">Employés</div></div><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">🏛️</div><div class="st-val" style="color:var(--red)">$0</div><div class="st-lab">Impôts</div></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="card" style="border-top:3px solid var(--amber)"><div class="card-h"><span class="card-t">🛒 Caisse Rapide</span></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:18px">🍔</span><div class="li-c"><div class="li-t">Mega Burger — $15</div></div><div style="display:flex;gap:6px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800;min-width:20px;text-align:center">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:18px">🍟</span><div class="li-c"><div class="li-t">Frites XL — $8</div></div><div style="display:flex;gap:6px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800;min-width:20px;text-align:center">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:18px">🥤</span><div class="li-c"><div class="li-t">eCola — $5</div></div><div style="display:flex;gap:6px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800;min-width:20px;text-align:center">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div style="margin-top:12px;padding:16px;background:var(--bg);border-radius:10px;border:1px solid var(--border);display:flex;justify-content:space-between;align-items:center"><span style="font-size:20px;font-weight:900;color:var(--amber)">$0.00</span><button class="btn btn-amb" onclick="alert('✅ Vente enregistrée + Facture envoyée')">Encaisser</button></div>
+            </div>
+            <div class="card" style="border-top:3px solid var(--green)"><div class="card-h"><span class="card-t">📋 Dernières ventes</span></div>
+                <div class="li" style="margin-bottom:6px"><span style="color:var(--green)">✓</span><div class="li-c"><div class="li-t">3 articles — #4821</div><div class="li-s">Maria R. • 14:33</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">+$38</div></div></div>
+                <div class="li" style="margin-bottom:6px"><span style="color:var(--green)">✓</span><div class="li-c"><div class="li-t">1 article — #2910</div><div class="li-s">John M. • 14:10</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">+$15</div></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ EMS ═══ -->
+    <div class="biz-panel" id="biz-ems" style="display:none">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">🚨</div><div class="st-val" style="color:var(--red)">2</div><div class="st-lab">Urgences</div></div><div class="st-card" style="border-left:3px solid var(--cyan)"><div class="st-icon">🛏️</div><div class="st-val" style="color:var(--cyan)">3/8</div><div class="st-lab">Lits</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💉</div><div class="st-val" style="color:var(--green)">12</div><div class="st-lab">Soins</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">👥</div><div class="st-val" style="color:var(--blue)">4</div><div class="st-lab">Personnel</div></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">🚨 Urgences</span></div><div class="li pulse-red-dot" style="border:1px solid rgba(220,38,38,0.3);border-radius:10px;margin-bottom:8px;background:rgba(220,38,38,0.03)"><div class="li-ic" style="background:rgba(220,38,38,0.15)">🔴</div><div class="li-c"><div class="li-t" style="color:var(--red)">Code Rouge — Fusillade</div><div class="li-s">2 victimes • 5min</div></div><button class="btn btn-red btn-s">Dispatch</button></div></div><div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">🛏️ Lits</span></div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px"><div class="bed occ"><div style="font-size:16px">🛏️</div><div style="font-size:9px;font-weight:800">Lit 1</div><div style="font-size:7px;color:var(--red)">Martinez</div></div><div class="bed occ"><div style="font-size:16px">🛏️</div><div style="font-size:9px;font-weight:800">Lit 2</div><div style="font-size:7px;color:var(--red)">Kowalski</div></div><div class="bed occ"><div style="font-size:16px">🛏️</div><div style="font-size:9px;font-weight:800">Lit 3</div><div style="font-size:7px;color:var(--red)">Park</div></div><div class="bed free"><div style="font-size:16px">✅</div><div style="font-size:9px;font-weight:800">4-8</div><div style="font-size:7px;color:var(--green)">Libre</div></div></div></div></div>
+        <div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">💉 Nouveau Soin</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div class="form-group"><label class="form-label">Patient</label><input class="form-input" placeholder="#ID"></div><div class="form-group"><label class="form-label">Type</label><select class="form-select"><option>🩹 Pansement</option><option>💉 Injection</option><option>🏥 Chirurgie</option><option>🚑 Réanimation</option></select></div></div><button class="btn btn-cyn" style="width:100%;margin-top:12px" onclick="alert('✅ Soin enregistré + Facture')">Enregistrer & Facturer</button></div>
+    </div>
+
+    <!-- ═══ TAXI ═══ -->
+    <div class="biz-panel" id="biz-taxi" style="display:none">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--yellow)"><div class="st-icon">🚕</div><div class="st-val" style="color:var(--yellow)">3</div><div class="st-lab">En attente</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$2,340</div><div class="st-lab">Recettes</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">🛣️</div><div class="st-val" style="color:var(--blue)">18</div><div class="st-lab">Courses</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">⭐</div><div class="st-val" style="color:var(--amber)">4.8</div><div class="st-lab">Note</div></div></div>
+        <div class="card" style="border-top:3px solid var(--yellow)"><div class="card-h"><span class="card-t">🚕 Courses</span></div><div class="li" style="border:1px solid rgba(234,179,8,0.3);border-radius:10px;margin-bottom:8px;background:rgba(234,179,8,0.03)"><div class="li-ic" style="background:rgba(234,179,8,0.15)">📍</div><div class="li-c"><div class="li-t">Aéroport ➜ Pillbox Hill</div><div class="li-s">#7821 • 12 km</div></div><div class="li-r"><div class="li-a" style="color:var(--yellow)">$55</div></div><button class="btn btn-ylw btn-s" style="margin-left:8px" onclick="alert('✅ Course acceptée !')">Accepter</button></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(234,179,8,0.1)">📍</div><div class="li-c"><div class="li-t">Vespucci ➜ Vinewood</div><div class="li-s">#3012 • 8 km</div></div><div class="li-r"><div class="li-a">$35</div></div><button class="btn btn-gh btn-s" style="margin-left:8px">Accepter</button></div></div>
+    </div>
+
+    <!-- ═══ MÉCANO ═══ -->
+    <div class="biz-panel" id="biz-mecano" style="display:none">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--orange)"><div class="st-icon">🔧</div><div class="st-val" style="color:var(--orange)">4</div><div class="st-lab">Réparations</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$5,800</div><div class="st-lab">Recettes</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">🚗</div><div class="st-val" style="color:var(--blue)">12</div><div class="st-lab">Véhicules</div></div><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">⚙️</div><div class="st-val" style="color:var(--red)">3</div><div class="st-lab">Pièces ⚠️</div></div></div>
+        <div class="card" style="border-top:3px solid var(--orange)"><div class="card-h"><span class="card-t">🔧 Tickets</span><button class="btn btn-org btn-s">+ Ticket</button></div><div style="padding:16px;border:1px solid var(--border);border-radius:12px;border-left:4px solid var(--red);margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-weight:900">🚗 Sultan RS — LS-4821</div><div style="font-size:10px;color:var(--muted)">#JM-01 • Moteur HS</div></div><span class="st st-r">Urgent</span></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><div style="background:var(--bg);padding:10px;border-radius:8px"><div style="font-size:8px;color:var(--muted);text-transform:uppercase">Moteur</div><div class="gauge"><div class="gauge-f" style="width:15%;background:var(--red)"></div></div><div style="font-size:10px;font-weight:800;color:var(--red);margin-top:3px">15%</div></div><div style="background:var(--bg);padding:10px;border-radius:8px"><div style="font-size:8px;color:var(--muted);text-transform:uppercase">Carrosserie</div><div class="gauge"><div class="gauge-f" style="width:45%;background:var(--amber)"></div></div><div style="font-size:10px;font-weight:800;color:var(--amber);margin-top:3px">45%</div></div><div style="background:var(--bg);padding:10px;border-radius:8px"><div style="font-size:8px;color:var(--muted);text-transform:uppercase">Freins</div><div class="gauge"><div class="gauge-f" style="width:60%;background:var(--amber)"></div></div><div style="font-size:10px;font-weight:800;margin-top:3px">60%</div></div></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><span style="font-size:16px;font-weight:900;color:var(--orange)">$1,200</span><button class="btn btn-org btn-s" onclick="alert('✅ Réparation terminée')">Terminer</button></div></div></div>
+    </div>
+
+    <!-- ═══ IMMOBILIER ═══ -->
+    <div class="biz-panel" id="biz-immo" style="display:none">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">🏠</div><div class="st-val" style="color:var(--green)">12</div><div class="st-lab">Biens en gestion</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">📋</div><div class="st-val" style="color:var(--amber)">3</div><div class="st-lab">Visites planifiées</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--blue)">$18,400</div><div class="st-lab">Loyers perçus/mois</div></div><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">⚠️</div><div class="st-val" style="color:var(--red)">2</div><div class="st-lab">Impayés</div></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="card" style="border-top:3px solid var(--green)"><div class="card-h"><span class="card-t">🏢 Biens Disponibles</span><button class="btn btn-grn btn-s">+ Ajouter bien</button></div>
+                <div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(34,197,94,0.1)">🏢</div><div class="li-c"><div class="li-t">Apt. Alta Street #4B</div><div class="li-s">2 pièces • Downtown • $800/mois</div></div><div class="li-r"><span class="st st-g">Loué</span></div></div>
+                <div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(217,119,6,0.1)">🏠</div><div class="li-c"><div class="li-t">Maison Vinewood Hills</div><div class="li-s">4 pièces • Piscine • $2,500/mois</div></div><div class="li-r"><span class="st st-a">En visite</span></div></div>
+                <div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(59,130,246,0.1)">🅿️</div><div class="li-c"><div class="li-t">Garage Legion Square</div><div class="li-s">2 places • Centre • $200/mois</div></div><div class="li-r"><span class="st st-g">Loué</span></div></div>
+                <div class="li" style="border:1px solid rgba(34,197,94,0.3);border-radius:10px;background:rgba(34,197,94,0.03)"><div class="li-ic" style="background:rgba(34,197,94,0.15)">🏢</div><div class="li-c"><div class="li-t">Apt. Pillbox #12A</div><div class="li-s">Studio • Centre médical • $600/mois</div></div><div class="li-r"><span style="font-weight:800;color:var(--green)">LIBRE</span></div></div>
+            </div>
+            <div>
+                <div class="card" style="border-top:3px solid var(--amber)"><div class="card-h"><span class="card-t">📋 Visites Planifiées</span></div>
+                    <div class="li" style="border-left:3px solid var(--amber);margin-bottom:8px"><div class="li-c"><div class="li-t">Lisa Park — Maison Vinewood</div><div class="li-s">Demain 15h • Première visite</div></div><div style="display:flex;gap:4px"><button class="btn btn-grn btn-s">✓</button><button class="btn btn-gh btn-s" style="color:var(--red)">✕</button></div></div>
+                    <div class="li" style="border-left:3px solid var(--blue)"><div class="li-c"><div class="li-t">Tommy K. — Apt. Pillbox</div><div class="li-s">Ven. 14h • Contre-visite</div></div><div style="display:flex;gap:4px"><button class="btn btn-grn btn-s">✓</button><button class="btn btn-gh btn-s" style="color:var(--red)">✕</button></div></div>
+                </div>
+                <div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">⚠️ Loyers Impayés</span></div>
+                    <div class="li" style="border:1px solid rgba(220,38,38,0.2);border-radius:10px;margin-bottom:8px;background:rgba(220,38,38,0.03)"><div class="li-c"><div class="li-t" style="color:var(--red)">#TK-01 — Garage Legion Square</div><div class="li-s">2 mois de retard • $400 dus</div></div><button class="btn btn-red btn-s">Relancer</button></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ LTD / SUPÉRETTE ═══ -->
+    <div class="biz-panel" id="biz-ltd" style="display:none">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">🛒</div><div class="st-val" style="color:var(--green)">156</div><div class="st-lab">Ventes semaine</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--amber)">$4,680</div><div class="st-lab">CA Semaine</div></div><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">📦</div><div class="st-val" style="color:var(--red)">5</div><div class="st-lab">Ruptures stock</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">👥</div><div class="st-val" style="color:var(--blue)">2</div><div class="st-lab">Caissiers</div></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="card" style="border-top:3px solid var(--green)"><div class="card-h"><span class="card-t">🛒 Caisse</span></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🥖</span><div class="li-c"><div class="li-t">Pain — $3</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🥤</span><div class="li-c"><div class="li-t">Sprunk — $4</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🍫</span><div class="li-c"><div class="li-t">Barre Chocolat — $2</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🚬</span><div class="li-c"><div class="li-t">Cigarettes — $8</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🔋</span><div class="li-c"><div class="li-t">Batterie Téléphone — $15</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                <button class="btn btn-grn" style="width:100%;margin-top:12px" onclick="alert('✅ Vente LTD enregistrée')">Encaisser</button>
+            </div>
+            <div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">📦 Stocks</span><button class="btn btn-grn btn-s">+ Commander</button></div>
+                <div class="li" style="margin-bottom:4px"><span style="font-size:14px">🥖</span><div class="li-c"><div class="li-t">Pain</div></div><div style="font-weight:800;color:var(--green)">45</div></div>
+                <div class="li" style="margin-bottom:4px"><span style="font-size:14px">🥤</span><div class="li-c"><div class="li-t">Sprunk</div></div><div style="font-weight:800;color:var(--amber)">12</div></div>
+                <div class="li" style="margin-bottom:4px"><span style="font-size:14px">🍫</span><div class="li-c"><div class="li-t">Chocolat</div></div><div style="font-weight:800;color:var(--red)">4 ⚠️</div></div>
+                <div class="li" style="margin-bottom:4px"><span style="font-size:14px">🚬</span><div class="li-c"><div class="li-t">Cigarettes</div></div><div style="font-weight:800;color:var(--red)">3 ⚠️</div></div>
+                <div class="li"><span style="font-size:14px">🔋</span><div class="li-c"><div class="li-t">Batteries</div></div><div style="font-weight:800;color:var(--green)">20</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ NIGHTCLUB ═══ -->
+    <div class="biz-panel" id="biz-club" style="display:none">
+        <div class="stats-row"><div class="st-card" style="border-left:3px solid var(--purple)"><div class="st-icon">🎵</div><div class="st-val" style="color:var(--purple)">2</div><div class="st-lab">Events cette sem.</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$22,100</div><div class="st-lab">CA Semaine</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">🎫</div><div class="st-val" style="color:var(--amber)">340</div><div class="st-lab">Entrées vendues</div></div><div class="st-card" style="border-left:3px solid var(--cyan)"><div class="st-icon">🍸</div><div class="st-val" style="color:var(--cyan)">890</div><div class="st-lab">Consos vendues</div></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="card" style="border-top:3px solid var(--purple)"><div class="card-h"><span class="card-t">🎫 Billetterie</span><button class="btn btn-pur btn-s">+ Événement</button></div>
+                <div style="padding:18px;border:1px solid rgba(168,85,247,0.3);border-radius:14px;background:rgba(168,85,247,0.03);margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:900">🎧 DJ Night — Solomun</div><div style="font-size:10px;color:var(--muted);margin-top:3px">Samedi 15/03 • 22h-04h</div></div><span class="st st-p">En vente</span></div><div style="display:flex;justify-content:space-between;align-items:center"><div><span style="font-size:18px;font-weight:900;color:var(--purple)">$30</span><span style="font-size:10px;color:var(--muted)"> / entrée</span></div><div style="font-size:11px;color:var(--muted)"><strong style="color:var(--green)">180</strong>/250 vendus</div></div></div>
+                <div style="padding:18px;border:1px solid var(--border);border-radius:14px"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:16px;font-weight:900">🎤 Karaoke Night</div><div style="font-size:10px;color:var(--muted);margin-top:3px">Ven. 14/03 • 20h-01h</div></div><span class="st st-g">Gratuit</span></div><div style="font-size:11px;color:var(--muted)"><strong style="color:var(--green)">160</strong> inscrits</div></div>
+            </div>
+            <div>
+                <div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">🍸 Bar — Conso Rapide</span></div>
+                    <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🍺</span><div class="li-c"><div class="li-t">Bière Piβwasser — $8</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                    <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🍸</span><div class="li-c"><div class="li-t">Cocktail Maison — $15</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                    <div class="li" style="background:var(--bg);border-radius:8px;margin-bottom:6px"><span style="font-size:16px">🥂</span><div class="li-c"><div class="li-t">Champagne VIP — $50</div></div><div style="display:flex;gap:4px;align-items:center"><button class="btn btn-gh btn-s">−</button><span style="font-weight:800">0</span><button class="btn btn-gh btn-s">+</button></div></div>
+                    <button class="btn btn-pur" style="width:100%;margin-top:12px" onclick="alert('✅ Conso enregistrée')">Encaisser</button>
+                </div>
+                <div class="card" style="border-top:3px solid var(--amber)"><div class="card-h"><span class="card-t">🎧 DJ en Service</span></div>
+                    <div class="li" style="border:1px solid rgba(168,85,247,0.2);border-radius:10px"><div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#a855f7,#7c3aed);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;color:white">DJ</div><div class="li-c"><div class="li-t">DJ Marco</div><div class="li-s">Set en cours — Deep House • 🟢 Live</div></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div><!-- /c-emploi -->
+<!-- ═══════════════════════════════════════ -->
+<!--     GOUVERNEMENT PAGES                 -->
+<!-- ═══════════════════════════════════════ -->
+<div class="pg" id="g-dash"><div class="classified">⚠️ Terminal Gouvernemental — Accès Confidentiel</div><div class="stats-row"><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">🏢</div><div class="st-val" style="color:var(--red)">3</div><div class="st-lab">Entreprises</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$4,830</div><div class="st-lab">Impôts perçus</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">👥</div><div class="st-val" style="color:var(--blue)">47</div><div class="st-lab">Citoyens</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">📂</div><div class="st-val" style="color:var(--amber)">5</div><div class="st-lab">Dossiers en attente</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">📑 Fiches d'Impôts</span></div><div class="li" style="margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🍔</div><div class="li-c"><div class="li-t">Burger Shot — Sem. 10</div><div class="li-s">Tranche 0%</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">$0</div></div></div><div class="li"><div class="li-ic" style="background:rgba(234,179,8,0.1)">🚕</div><div class="li-c"><div class="li-t">Duvet Transport — Sem. 10</div><div class="li-s">Tranche 5%</div></div><div class="li-r"><div class="li-a" style="color:var(--amber)">$120</div></div></div></div><div class="card" style="border-top:3px solid var(--amber)"><div class="card-h"><span class="card-t">🔒 Derniers Dossiers</span></div><div class="li" style="margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">📄</div><div class="li-c"><div class="li-t">Bilan Q1 — Burger Shot</div><div class="li-s">Il y a 1h</div></div><div class="li-r"><span class="st st-a">Non lu</span></div></div><div class="li"><div class="li-ic" style="background:rgba(59,130,246,0.1)">📄</div><div class="li-c"><div class="li-t">Rapport Sanitaire — SAMS</div></div><div class="li-r"><span class="st st-g">Lu ✓</span></div></div></div></div></div>
+<div class="pg" id="g-biz"><div class="classified">🏢 Formulaire de Création d'Entreprise</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:20px"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">📝 Nouvelle Entreprise</span></div><div class="form-group"><label class="form-label">Nom</label><input class="form-input" placeholder="Ex : Burger Shot"></div><div class="form-group"><label class="form-label">ID du Patron</label><input class="form-input" placeholder="ID joueur"></div><div class="form-group"><label class="form-label">Template</label><select class="form-select"><option>🍔 Restauration</option><option>🏥 EMS</option><option>🚕 Taxi</option><option>🔧 Mécanique</option><option>🏪 Commerce</option></select></div><div class="form-group"><label class="form-label">Adresse</label><input class="form-input" placeholder="Emplacement"></div><button class="btn btn-red" style="width:100%" onclick="alert('✅ Entreprise créée !')">🏛️ Créer l'Entreprise</button></div><div class="card" style="border-top:3px solid var(--green)"><div class="card-h"><span class="card-t">🏢 Actives</span><span style="font-size:12px;font-weight:800;color:var(--green)">3</span></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🍔</div><div class="li-c"><div class="li-t">Burger Shot</div><div class="li-s">Jake Wilson • Restaurant</div></div><div class="li-r"><span class="st st-g">Active</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(59,130,246,0.1)">🏥</div><div class="li-c"><div class="li-t">SAMS</div><div class="li-s">Dr. Rivera • Service Public</div></div><div class="li-r"><span class="st st-b">Public</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px"><div class="li-ic" style="background:rgba(234,179,8,0.1)">🚕</div><div class="li-c"><div class="li-t">Duvet Transport</div><div class="li-s">Mike Duvet • Logistique</div></div><div class="li-r"><span class="st st-g">Active</span></div></div></div></div></div>
+<div class="pg" id="g-fisc"><div class="classified">💰 Tableau de Bord Fiscal</div><div class="card"><div class="card-h"><span class="card-t">📑 Déclarations Reçues</span></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:10px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🍔</div><div class="li-c"><div class="li-t">Burger Shot — Sem. 10</div><div class="li-s">CA $12,450 • Bénéfice $8,250 • 0%</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">$0</div></div><button class="btn btn-grn btn-s" style="margin-left:8px">✓</button></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:10px"><div class="li-ic" style="background:rgba(234,179,8,0.1)">🚕</div><div class="li-c"><div class="li-t">Duvet Transport — Sem. 10</div><div class="li-s">CA $18,700 • Bénéfice $12,400 • 5%</div></div><div class="li-r"><div class="li-a" style="color:var(--amber)">$120</div></div><button class="btn btn-grn btn-s" style="margin-left:8px">✓</button></div><div class="li" style="border:1px solid rgba(220,38,38,0.3);border-radius:10px;background:rgba(220,38,38,0.03)"><div class="li-ic" style="background:rgba(220,38,38,0.15)">⚠️</div><div class="li-c"><div class="li-t" style="color:var(--red)">Duvet Transport — Sem. 9 (RETARD)</div><div class="li-s">Non déclaré</div></div><div class="li-r"><span class="st st-r">Retard</span></div><button class="btn btn-red btn-s" style="margin-left:8px" onclick="alert('📨 Amende $500 appliquée')">Amende</button></div></div></div>
+<div class="pg" id="g-coffre"><div class="classified">🔒 Coffre-Fort — Lecture Seule</div><div class="card"><div class="card-h"><span class="card-t">📂 Documents Reçus</span></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">📄</div><div class="li-c"><div class="li-t">Bilan Financier Q1 — Burger Shot</div><div class="li-s">09/03/2025 • Jake Wilson</div></div><div class="li-r"><span class="st st-a">Non lu</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(59,130,246,0.1)">📄</div><div class="li-c"><div class="li-t">Rapport Sanitaire — SAMS</div><div class="li-s">08/03/2025</div></div><div class="li-r"><span class="st st-g">Lu ✓</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px"><div class="li-ic" style="background:rgba(234,179,8,0.1)">📄</div><div class="li-c"><div class="li-t">Flotte Véhicules — Duvet Transport</div><div class="li-s">07/03/2025</div></div><div class="li-r"><span class="st st-a">Non lu</span></div></div></div></div>
+<div class="pg" id="g-lois"><div class="classified">⚖️ Éditeur de Lois</div><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">📝 Rédiger un Article</span></div><div class="form-group"><label class="form-label">Catégorie</label><select class="form-select"><option>🚔 Code Pénal</option><option>🚗 Code Route</option><option>⚖️ Constitution</option><option>🏢 Droit Civil</option></select></div><div class="form-group"><label class="form-label">Titre</label><input class="form-input" placeholder="Ex : Refus d'obtempérer"></div><div class="form-group"><label class="form-label">Contenu</label><textarea class="form-input" style="min-height:100px;resize:vertical" placeholder="Texte de loi…"></textarea></div><button class="btn btn-red" style="width:100%" onclick="alert('📢 Article publié !')">Publier</button></div></div>
+<div class="pg" id="g-cit"><div class="search-b"><span>🔍</span><input placeholder="Rechercher un citoyen…"></div><div class="card"><div class="card-h"><span class="card-t">👥 Citoyens</span><span style="font-size:11px;color:var(--muted)">47</span></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:6px"><div style="font-weight:700;width:60px;font-size:11px" class="mono">#JM-01</div><div class="li-c"><div class="li-t">John Martinez</div><div class="li-s">Burger Shot • Casier vierge</div></div><div class="li-r"><span class="st st-g">En ligne</span></div></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:6px"><div style="font-weight:700;width:60px;font-size:11px" class="mono">#MR-01</div><div class="li-c"><div class="li-t">Maria Rodriguez</div><div class="li-s">Burger Shot • Casier vierge</div></div><div class="li-r"><span class="st st-g">En ligne</span></div></div><div class="li"><div style="font-weight:700;width:60px;font-size:11px" class="mono">#TK-01</div><div class="li-c"><div class="li-t">Tommy Kowalski</div><div class="li-s">Burger Shot • <span style="color:var(--red)">1 infraction</span></div></div><div class="li-r"><span class="st st-a">Hier</span></div></div></div></div>
+<div class="pg" id="g-casier"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">🚔 Ajouter une Infraction</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div class="form-group"><label class="form-label">Citoyen</label><input class="form-input" placeholder="#ID ou Nom"></div><div class="form-group"><label class="form-label">Type</label><select class="form-select"><option>Vol simple</option><option>Vol aggravé</option><option>Excès vitesse</option><option>Agression</option><option>Port arme illégal</option></select></div></div><div class="form-group"><label class="form-label">Amende ($)</label><input class="form-input" type="number" placeholder="0"></div><button class="btn btn-red" style="width:100%" onclick="alert('✅ Infraction enregistrée')">Enregistrer</button></div></div>
+<div class="pg" id="g-plaque"><div class="search-b"><span>🔍</span><input placeholder="Plaque d'immatriculation… (Ex : LS-BS-001)"></div><div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">🚗 LS-BS-001</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div style="background:var(--bg);padding:14px;border-radius:10px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Véhicule</div><div style="font-weight:800">Vapid Burrito</div></div><div style="background:var(--bg);padding:14px;border-radius:10px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Propriétaire</div><div style="font-weight:800">Burger Shot Inc.</div></div><div style="background:var(--bg);padding:14px;border-radius:10px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Conducteur</div><div style="font-weight:800;color:var(--blue)">Maria Rodriguez</div></div><div style="background:var(--bg);padding:14px;border-radius:10px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Moteur</div><div style="font-weight:800;color:var(--green)">85% — OK</div></div></div></div></div>
+<div class="pg" id="g-comm"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">📢 Nouveau Communiqué</span></div><div class="form-group"><label class="form-label">Titre</label><input class="form-input" placeholder="Titre du communiqué"></div><div class="form-group"><label class="form-label">Contenu</label><textarea class="form-input" style="min-height:120px;resize:vertical" placeholder="Rédigez…"></textarea></div><button class="btn btn-red" style="width:100%" onclick="alert('📢 Communiqué publié !')">Publier</button></div></div>
+<div class="pg" id="g-votes"><div class="card" style="border-top:3px solid var(--blue)"><div class="card-h"><span class="card-t">🗳️ Créer un Vote</span></div><div class="form-group"><label class="form-label">Titre</label><input class="form-input" placeholder="Ex : Élection du Maire"></div><div class="form-group"><label class="form-label">Option 1</label><input class="form-input" placeholder="Candidat / Choix"></div><div class="form-group"><label class="form-label">Option 2</label><input class="form-input" placeholder="Candidat / Choix"></div><div class="form-group"><label class="form-label">Durée (jours)</label><input class="form-input" type="number" value="3"></div><button class="btn btn-red" style="width:100%" onclick="alert('🗳️ Vote lancé !')">Lancer</button></div></div>
+
+<!-- ═══════════════════════════════════════ -->
+<!--          EMS PAGES                     -->
+<!-- ═══════════════════════════════════════ -->
+<div class="pg" id="e-dash"><div class="stats-row"><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">🚨</div><div class="st-val" style="color:var(--red)">2</div><div class="st-lab">Urgences</div></div><div class="st-card" style="border-left:3px solid var(--cyan)"><div class="st-icon">🛏️</div><div class="st-val" style="color:var(--cyan)">3/8</div><div class="st-lab">Lits occupés</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💉</div><div class="st-val" style="color:var(--green)">12</div><div class="st-lab">Soins aujourd'hui</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">👥</div><div class="st-val" style="color:var(--blue)">4</div><div class="st-lab">Personnel</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">🚨 Urgences Actives</span></div><div class="li pulse-red-dot" style="border:1px solid rgba(220,38,38,0.3);border-radius:10px;margin-bottom:8px;background:rgba(220,38,38,0.03)"><div class="li-ic" style="background:rgba(220,38,38,0.15)">🔴</div><div class="li-c"><div class="li-t" style="color:var(--red)">Code Rouge — Fusillade Vespucci</div><div class="li-s">2 victimes • 5min</div></div><button class="btn btn-red btn-s">Dispatch</button></div><div class="li" style="border:1px solid rgba(217,119,6,0.3);border-radius:10px;background:rgba(217,119,6,0.03)"><div class="li-ic" style="background:rgba(217,119,6,0.15)">🟡</div><div class="li-c"><div class="li-t" style="color:var(--amber)">Code Orange — Accident Route 1</div><div class="li-s">1 blessé • 12min</div></div><button class="btn btn-gh btn-s">Assigner</button></div></div><div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">🛏️ Lits</span></div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"><div class="bed occ"><div style="font-size:18px">🛏️</div><div style="font-size:10px;font-weight:800">Lit 1</div><div style="font-size:8px;color:var(--red)">J. Martinez</div></div><div class="bed occ"><div style="font-size:18px">🛏️</div><div style="font-size:10px;font-weight:800">Lit 2</div><div style="font-size:8px;color:var(--red)">T. Kowalski</div></div><div class="bed occ"><div style="font-size:18px">🛏️</div><div style="font-size:10px;font-weight:800">Lit 3</div><div style="font-size:8px;color:var(--red)">L. Park</div></div><div class="bed free"><div style="font-size:18px">✅</div><div style="font-size:10px;font-weight:800">Lit 4</div><div style="font-size:8px;color:var(--green)">Libre</div></div><div class="bed free"><div style="font-size:18px">✅</div><div style="font-size:10px;font-weight:800">5</div><div style="font-size:8px;color:var(--green)">Libre</div></div><div class="bed free"><div style="font-size:18px">✅</div><div style="font-size:10px;font-weight:800">6</div><div style="font-size:8px;color:var(--green)">Libre</div></div><div class="bed free"><div style="font-size:18px">✅</div><div style="font-size:10px;font-weight:800">7</div><div style="font-size:8px;color:var(--green)">Libre</div></div><div class="bed free"><div style="font-size:18px">✅</div><div style="font-size:10px;font-weight:800">8</div><div style="font-size:8px;color:var(--green)">Libre</div></div></div></div></div></div>
+<div class="pg" id="e-urg"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">🚨 Dispatch</span><button class="btn btn-red btn-s">+ Urgence</button></div><div class="li pulse-red-dot" style="border:1px solid rgba(220,38,38,0.3);border-radius:10px;margin-bottom:10px;background:rgba(220,38,38,0.03);padding:18px"><div class="li-ic" style="background:rgba(220,38,38,0.2);font-size:22px">🔴</div><div class="li-c"><div class="li-t" style="color:var(--red);font-size:14px">CODE ROUGE — Fusillade Vespucci</div><div class="li-s">2 victimes • Blessures par balle • Vespucci Beach</div></div><button class="btn btn-red btn-s" onclick="alert('🚑 Ambulance 1 envoyée !')">🚑 Dispatcher</button></div><div class="li" style="border:1px solid rgba(217,119,6,0.3);border-radius:10px;background:rgba(217,119,6,0.03);padding:18px"><div class="li-ic" style="background:rgba(217,119,6,0.2);font-size:22px">🟡</div><div class="li-c"><div class="li-t" style="color:var(--amber);font-size:14px">CODE ORANGE — Accident Route 1</div><div class="li-s">1 blessé léger • Fracture possible</div></div><button class="btn btn-cyn btn-s" onclick="alert('🚑 Ambulance 2 envoyée !')">🚑 Dispatcher</button></div></div></div>
+<div class="pg" id="e-lits"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px"><div class="bed occ" style="padding:20px"><div style="font-size:24px;margin-bottom:6px">🛏️</div><div style="font-weight:900">Lit 1</div><div style="font-size:11px;color:var(--red);margin-top:4px;font-weight:700">John Martinez</div><div style="font-size:9px;color:var(--muted);margin-top:4px">Blessure balle • Dr. Rivera • 2h</div><button class="btn btn-cyn btn-s" style="margin-top:10px" onclick="alert('✅ Patient libéré')">Libérer</button></div><div class="bed occ" style="padding:20px"><div style="font-size:24px;margin-bottom:6px">🛏️</div><div style="font-weight:900">Lit 2</div><div style="font-size:11px;color:var(--red);margin-top:4px;font-weight:700">Tommy Kowalski</div><div style="font-size:9px;color:var(--muted);margin-top:4px">Fracture • Dr. Kim</div><button class="btn btn-cyn btn-s" style="margin-top:10px">Libérer</button></div><div class="bed occ" style="padding:20px"><div style="font-size:24px;margin-bottom:6px">🛏️</div><div style="font-weight:900">Lit 3</div><div style="font-size:11px;color:var(--amber);margin-top:4px;font-weight:700">Lisa Park</div><div style="font-size:9px;color:var(--muted);margin-top:4px">Intoxication • Inf. Lopez</div><button class="btn btn-cyn btn-s" style="margin-top:10px">Libérer</button></div><div class="bed free" style="padding:20px"><div style="font-size:24px;margin-bottom:6px">✅</div><div style="font-weight:900">Lits 4-8</div><div style="font-size:11px;color:var(--green);margin-top:4px;font-weight:700">5 Disponibles</div><button class="btn btn-cyn btn-s" style="margin-top:10px">+ Admettre</button></div></div></div>
+<div class="pg" id="e-patients"><div class="search-b"><span>🔍</span><input placeholder="Rechercher un patient…"></div><div class="card"><div class="card-h"><span class="card-t">👥 Patients</span></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(6,182,212,0.1)">👤</div><div class="li-c"><div class="li-t">John Martinez (#JM-01)</div><div class="li-s">Blessure par balle</div></div><div class="li-r"><span class="st st-r">Hospitalisé</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(6,182,212,0.1)">👤</div><div class="li-c"><div class="li-t">Tommy Kowalski (#TK-01)</div><div class="li-s">Fracture</div></div><div class="li-r"><span class="st st-a">En soins</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px"><div class="li-ic" style="background:rgba(6,182,212,0.1)">👤</div><div class="li-c"><div class="li-t">Maria Rodriguez (#MR-01)</div><div class="li-s">Bilan annuel • 01/03</div></div><div class="li-r"><span class="st st-g">Sortie</span></div></div></div></div>
+<div class="pg" id="e-soins"><div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">💉 Acte de Soin</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div class="form-group"><label class="form-label">Patient</label><input class="form-input" placeholder="#JM-01"></div><div class="form-group"><label class="form-label">Type</label><select class="form-select"><option>🩹 Pansement</option><option>💉 Injection</option><option>🏥 Chirurgie</option><option>🩻 Examen</option><option>🚑 Réanimation</option></select></div></div><div class="form-group"><label class="form-label">Diagnostic</label><textarea class="form-input" style="min-height:80px;resize:vertical" placeholder="Notes…"></textarea></div><div class="form-group"><label class="form-label">Coût ($)</label><input class="form-input" type="number" placeholder="200"></div><button class="btn btn-cyn" style="width:100%" onclick="alert('✅ Acte enregistré + Facture envoyée')">Enregistrer & Facturer</button></div></div>
+<div class="pg" id="e-stocks"><div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">📦 Stocks Médicaux</span><button class="btn btn-cyn btn-s">+ Commander</button></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">💉</span><div class="li-c"><div class="li-t">Seringues</div></div><div style="font-weight:800;color:var(--green)">48</div></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">🩹</span><div class="li-c"><div class="li-t">Bandages</div></div><div style="font-weight:800;color:var(--green)">65</div></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">💊</span><div class="li-c"><div class="li-t">Antidouleurs</div></div><div style="font-weight:800;color:var(--amber)">18</div></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">🩸</span><div class="li-c"><div class="li-t">Poches de Sang</div></div><div style="font-weight:800;color:var(--red)">7 ⚠️</div></div><div class="li"><span style="font-size:16px">🧪</span><div class="li-c"><div class="li-t">Kits d'Analyse</div></div><div style="font-weight:800;color:var(--red)">3 ⚠️</div></div></div></div>
+<div class="pg" id="e-amb"><div class="card" style="border-top:3px solid var(--cyan)"><div class="card-h"><span class="card-t">🚑 Ambulances</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div style="padding:18px;background:var(--bg);border-radius:12px;border:1px solid rgba(34,197,94,0.2)"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:22px">🚑</span><span class="st st-g">Disponible</span></div><div style="font-weight:900">Amb. 1 — LS-EMS-01</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Essence 90% • Moteur 95%</div></div><div style="padding:18px;background:var(--bg);border-radius:12px;border:1px solid rgba(220,38,38,0.2)"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:22px">🚑</span><span class="st st-r">Intervention</span></div><div style="font-weight:900">Amb. 2 — LS-EMS-02</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Dr. Kim • Essence 65%</div></div></div></div></div>
+
+<!-- ═══════════════════════════════════════ -->
+<!--          TAXI PAGES                    -->
+<!-- ═══════════════════════════════════════ -->
+<div class="pg" id="t-dash"><div class="stats-row"><div class="st-card" style="border-left:3px solid var(--yellow)"><div class="st-icon">🚕</div><div class="st-val" style="color:var(--yellow)">3</div><div class="st-lab">Courses en attente</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$2,340</div><div class="st-lab">Recettes du jour</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">🛣️</div><div class="st-val" style="color:var(--blue)">18</div><div class="st-lab">Courses complétées</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">⭐</div><div class="st-val" style="color:var(--amber)">4.8</div><div class="st-lab">Note moyenne</div></div></div><div class="card" style="border-top:3px solid var(--yellow)"><div class="card-h"><span class="card-t">🚕 Prochaines Courses</span></div><div class="li" style="border:1px solid rgba(234,179,8,0.3);border-radius:10px;margin-bottom:8px;background:rgba(234,179,8,0.03)"><div class="li-ic" style="background:rgba(234,179,8,0.15)">📍</div><div class="li-c"><div class="li-t">Aéroport ➜ Pillbox Hill</div><div class="li-s">Client #7821 • ~12 km</div></div><div class="li-r"><div class="li-a" style="color:var(--yellow)">$55</div></div><button class="btn btn-ylw btn-s" style="margin-left:8px" onclick="alert('✅ Course acceptée !')">Accepter</button></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(234,179,8,0.1)">📍</div><div class="li-c"><div class="li-t">Vespucci ➜ Vinewood</div><div class="li-s">Client #3012 • ~8 km</div></div><div class="li-r"><div class="li-a">$35</div></div><button class="btn btn-gh btn-s" style="margin-left:8px">Accepter</button></div></div></div>
+<div class="pg" id="t-queue"><div class="card" style="border-top:3px solid var(--yellow)"><div class="card-h"><span class="card-t">🚕 File d'Attente</span><span style="font-size:12px;font-weight:800;color:var(--yellow)">3</span></div><div style="padding:18px;border:1px solid var(--border);border-radius:14px;border-left:3px solid var(--yellow);margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:15px;font-weight:900">📍 Aéroport ➜ Pillbox Hill</div><div style="font-size:10px;color:var(--muted);margin-top:3px">Client #7821 • ~12 km • ~15min</div></div><div style="font-size:20px;font-weight:900;color:var(--yellow)">$55</div></div><button class="btn btn-ylw" onclick="alert('✅ Course acceptée !')">🚕 Accepter</button></div><div style="padding:18px;border:1px solid var(--border);border-radius:14px;border-left:3px solid var(--amber);margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><div><div style="font-size:15px;font-weight:900">📍 Vespucci ➜ Vinewood</div><div style="font-size:10px;color:var(--muted);margin-top:3px">Client #3012 • ~8 km</div></div><div style="font-size:20px;font-weight:900;color:var(--amber)">$35</div></div><button class="btn btn-ylw">🚕 Accepter</button></div></div></div>
+<div class="pg" id="t-active"><div style="padding:32px;border:1px solid rgba(34,197,94,0.3);border-radius:18px;background:rgba(34,197,94,0.03);text-align:center"><div style="font-size:48px;margin-bottom:12px">🚕</div><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:3px;color:var(--green);margin-bottom:6px">Course en Cours</div><div style="font-size:22px;font-weight:900;text-transform:uppercase">Aéroport ➜ Pillbox Hill</div><div style="font-size:12px;color:var(--muted);margin-top:4px">Client #7821</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin:24px 0"><div style="background:var(--bg);padding:18px;border-radius:12px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Distance</div><div style="font-size:22px;font-weight:900;color:var(--yellow)">12 km</div></div><div style="background:var(--bg);padding:18px;border-radius:12px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Temps</div><div style="font-size:22px;font-weight:900;color:var(--blue)">15 min</div></div><div style="background:var(--bg);padding:18px;border-radius:12px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Tarif</div><div style="font-size:22px;font-weight:900;color:var(--green)">$55</div></div></div><div style="display:flex;gap:10px;justify-content:center"><button class="btn btn-ylw" style="padding:14px 36px" onclick="alert('✅ Course terminée — $55 facturés')">✅ Terminer</button><button class="btn btn-red">✕ Annuler</button></div></div></div>
+<div class="pg" id="t-tarif"><div class="card" style="border-top:3px solid var(--yellow);max-width:500px"><div class="card-h"><span class="card-t">💲 Grille Tarifaire</span></div><div style="font-size:12px"><div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">Prise en charge</span><span style="font-weight:900;color:var(--yellow)">$5</span></div><div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)"><span>Prix / km</span><span style="font-weight:900;color:var(--yellow)">$3.50</span></div><div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)"><span>Supplément nuit</span><span style="font-weight:900;color:var(--amber)">+25%</span></div><div style="display:flex;justify-content:space-between;padding:12px 0"><span>Attente / min</span><span style="font-weight:900">$1</span></div></div></div></div>
+<div class="pg" id="t-fleet"><div class="card" style="border-top:3px solid var(--yellow)"><div class="card-h"><span class="card-t">🚗 Flotte</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div style="padding:18px;background:var(--bg);border-radius:12px;border:1px solid rgba(34,197,94,0.2)"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:22px">🚕</span><span class="st st-g">Disponible</span></div><div style="font-weight:900">Taxi 1 — LS-TX-001</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Essence 88% • Moteur 92%</div></div><div style="padding:18px;background:var(--bg);border-radius:12px;border:1px solid rgba(234,179,8,0.2)"><div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:22px">🚕</span><span class="st st-a">En course</span></div><div style="font-weight:900">Taxi 2 — LS-TX-002</div><div style="font-size:10px;color:var(--muted);margin-top:4px">Mike D. • Essence 54%</div></div></div></div></div>
+<div class="pg" id="t-hist"><div class="card"><div class="card-h"><span class="card-t">📋 Historique</span></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:6px"><div style="color:var(--green)">✓</div><div class="li-c"><div class="li-t">Sandy Shores ➜ LS Centre</div><div class="li-s">#4421 • ⭐ 5.0 • 30min</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">+$85</div></div></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:6px"><div style="color:var(--green)">✓</div><div class="li-c"><div class="li-t">Pillbox ➜ Aéroport</div><div class="li-s">#2201 • ⭐ 4.5 • 1h</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">+$50</div></div></div><div class="li"><div style="color:var(--red)">✕</div><div class="li-c"><div class="li-t" style="color:var(--red)">Annulée — #1120</div><div class="li-s">Client absent</div></div><div class="li-r"><div class="li-a" style="color:var(--muted)">$0</div></div></div></div></div>
+
+<!-- ═══════════════════════════════════════ -->
+<!--        MÉCANO PAGES                    -->
+<!-- ═══════════════════════════════════════ -->
+<div class="pg" id="m-dash"><div class="stats-row"><div class="st-card" style="border-left:3px solid var(--orange)"><div class="st-icon">🔧</div><div class="st-val" style="color:var(--orange)">4</div><div class="st-lab">Réparations</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">💰</div><div class="st-val" style="color:var(--green)">$5,800</div><div class="st-lab">Recettes semaine</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">🚗</div><div class="st-val" style="color:var(--blue)">12</div><div class="st-lab">Véhicules traités</div></div><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">⚙️</div><div class="st-val" style="color:var(--red)">3</div><div class="st-lab">Pièces en rupture</div></div></div><div class="card" style="border-top:3px solid var(--orange)"><div class="card-h"><span class="card-t">🔧 Tickets en Cours</span></div><div class="li" style="border-left:3px solid var(--red);margin-bottom:8px"><div class="li-ic" style="background:rgba(220,38,38,0.1)">🚗</div><div class="li-c"><div class="li-t">Sultan RS — LS-4821</div><div class="li-s">Moteur HS • #JM-01</div></div><div class="li-r"><div class="li-a" style="color:var(--red)">$1,200</div><span class="st st-r">Urgent</span></div></div><div class="li" style="border-left:3px solid var(--orange);margin-bottom:8px"><div class="li-ic" style="background:rgba(249,115,22,0.1)">🚗</div><div class="li-c"><div class="li-t">Elegy RH8 — LS-3310</div><div class="li-s">Carrosserie + peinture • #MR-01</div></div><div class="li-r"><div class="li-a" style="color:var(--orange)">$800</div><span class="st" style="background:rgba(249,115,22,0.1);color:var(--orange)">En cours</span></div></div></div></div>
+<div class="pg" id="m-rep"><div class="card" style="border-top:3px solid var(--orange)"><div class="card-h"><span class="card-t">🔧 Réparations</span><button class="btn btn-org btn-s">+ Ticket</button></div><div style="padding:18px;border:1px solid var(--border);border-radius:14px;border-left:4px solid var(--red);margin-bottom:12px"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div><div style="font-size:16px;font-weight:900">🚗 Sultan RS — LS-4821</div><div style="font-size:10px;color:var(--muted);margin-top:3px">#JM-01 • Reçu 10:30</div></div><span class="st st-r">Urgent</span></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px"><div style="background:var(--bg);padding:12px;border-radius:8px"><div style="font-size:8px;color:var(--muted);text-transform:uppercase">Moteur</div><div class="gauge"><div class="gauge-f" style="width:15%;background:var(--red)"></div></div><div style="font-size:11px;font-weight:800;color:var(--red);margin-top:4px">15%</div></div><div style="background:var(--bg);padding:12px;border-radius:8px"><div style="font-size:8px;color:var(--muted);text-transform:uppercase">Carrosserie</div><div class="gauge"><div class="gauge-f" style="width:45%;background:var(--amber)"></div></div><div style="font-size:11px;font-weight:800;color:var(--amber);margin-top:4px">45%</div></div><div style="background:var(--bg);padding:12px;border-radius:8px"><div style="font-size:8px;color:var(--muted);text-transform:uppercase">Freins</div><div class="gauge"><div class="gauge-f" style="width:60%;background:var(--amber)"></div></div><div style="font-size:11px;font-weight:800;margin-top:4px">60%</div></div></div><div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:10px;color:var(--muted)">Mécano : Tony V.</span><div style="display:flex;gap:8px;align-items:center"><span style="font-size:18px;font-weight:900;color:var(--orange)">$1,200</span><button class="btn btn-org btn-s" onclick="alert('✅ Réparation terminée — Facture envoyée')">✅ Terminer</button></div></div></div></div></div>
+<div class="pg" id="m-insp"><div class="card" style="border-top:3px solid var(--orange)"><div class="card-h"><span class="card-t">🩻 Inspection Véhicule</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px"><div class="form-group"><label class="form-label">Plaque</label><input class="form-input" placeholder="LS-4821"></div><div class="form-group"><label class="form-label">Modèle</label><input class="form-input" placeholder="Sultan RS"></div></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px"><div style="background:var(--bg);padding:14px;border-radius:10px"><label class="form-label">Moteur %</label><input class="form-input" type="number" value="85"></div><div style="background:var(--bg);padding:14px;border-radius:10px"><label class="form-label">Carrosserie %</label><input class="form-input" type="number" value="70"></div><div style="background:var(--bg);padding:14px;border-radius:10px"><label class="form-label">Freins %</label><input class="form-input" type="number" value="90"></div></div><button class="btn btn-org" style="width:100%" onclick="alert('✅ Inspection + Devis généré')">Enregistrer & Devis</button></div></div>
+<div class="pg" id="m-pieces"><div class="card" style="border-top:3px solid var(--orange)"><div class="card-h"><span class="card-t">⚙️ Pièces</span><button class="btn btn-org btn-s">+ Commander</button></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">⚙️</span><div class="li-c"><div class="li-t">Blocs Moteur</div></div><div style="font-weight:800;color:var(--green)">5</div></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">🛞</span><div class="li-c"><div class="li-t">Pneus</div></div><div style="font-weight:800;color:var(--red)">4 ⚠️</div></div><div class="li" style="margin-bottom:6px"><span style="font-size:16px">🎨</span><div class="li-c"><div class="li-t">Kits Peinture</div></div><div style="font-weight:800;color:var(--red)">2 ⚠️</div></div><div class="li"><span style="font-size:16px">🔩</span><div class="li-c"><div class="li-t">Kits Freins</div></div><div style="font-weight:800;color:var(--green)">8</div></div></div></div>
+<div class="pg" id="m-clients"><div class="search-b"><span>🔍</span><input placeholder="Client ou plaque…"></div><div class="card"><div class="card-h"><span class="card-t">👥 Fiches Clients</span></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div class="li-ic" style="background:rgba(249,115,22,0.1)">👤</div><div class="li-c"><div class="li-t">John Martinez (#JM-01)</div><div class="li-s">Sultan RS • 3 visites</div></div><div class="li-r"><div class="li-a" style="color:var(--orange)">$2,400</div></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px"><div class="li-ic" style="background:rgba(249,115,22,0.1)">🏢</div><div class="li-c"><div class="li-t">Burger Shot Inc.</div><div class="li-s">Burrito + Faggio • 4 visites</div></div><div class="li-r"><div class="li-a">$850</div></div></div></div></div>
+<div class="pg" id="m-devis"><div class="card" style="border-top:3px solid var(--orange)"><div class="card-h"><span class="card-t">📄 Devis & Factures</span><button class="btn btn-org btn-s">+ Devis</button></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><span>📄</span><div class="li-c"><div class="li-t">Devis #D-089 — Sultan RS</div><div class="li-s">Moteur + Carrosserie</div></div><div class="li-r"><div class="li-a" style="color:var(--orange)">$1,200</div><span class="st st-a">Attente</span></div></div><div class="li" style="border:1px solid var(--border);border-radius:10px"><span>🧾</span><div class="li-c"><div class="li-t">Facture #F-085 — Zentorno</div><div class="li-s">Custom complet</div></div><div class="li-r"><div class="li-a" style="color:var(--green)">$3,500</div><span class="st st-g">Payée</span></div></div></div></div>
+
+<!-- ═══════════════════════════════════════ -->
+<!--          STAFF PAGES                   -->
+<!-- ═══════════════════════════════════════ -->
+<div class="pg" id="s-dash"><div class="god-ban"><div class="pulse-dot" style="background:var(--purple)"></div><div><div style="font-size:11px;font-weight:700;color:var(--purple)">PANEL STAFF — ACCÈS TOTAL</div><div style="font-size:9px;color:var(--muted);margin-top:2px">Toutes vos actions sont loguées.</div></div></div><div class="stats-row"><div class="st-card" style="border-left:3px solid var(--purple)"><div class="st-icon">👥</div><div class="st-val" style="color:var(--purple)">47</div><div class="st-lab">Comptes</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">🟢</div><div class="st-val" style="color:var(--green)">12</div><div class="st-lab">En ligne</div></div><div class="st-card" style="border-left:3px solid var(--red)"><div class="st-icon">🚫</div><div class="st-val" style="color:var(--red)">2</div><div class="st-lab">Bannis</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">📜</div><div class="st-val" style="color:var(--amber)">1,247</div><div class="st-lab">Actions 24h</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">🚨 Alertes</span></div><div class="li" style="border:1px solid rgba(239,68,68,0.2);border-radius:10px;margin-bottom:8px;background:rgba(239,68,68,0.03)"><div class="li-ic" style="background:rgba(239,68,68,0.15)">⚠️</div><div class="li-c"><div class="li-t" style="color:var(--red)">Transaction suspecte $50,000</div><div class="li-s">#MD-01 → #XX-99 • 15min</div></div><button class="btn btn-red btn-s">Investiguer</button></div><div class="li" style="border:1px solid rgba(245,158,11,0.2);border-radius:10px;background:rgba(245,158,11,0.03)"><div class="li-ic" style="background:rgba(245,158,11,0.15)">⚠️</div><div class="li-c"><div class="li-t" style="color:var(--amber)">IP dupliquée — Multicompte ?</div><div class="li-s">#TK-01 et #LP-01</div></div><button class="btn btn-gh btn-s">Vérifier</button></div></div><div class="card" style="border-top:3px solid var(--purple)"><div class="card-h"><span class="card-t">📜 Actions Staff</span></div><div class="li" style="margin-bottom:4px"><div style="font-size:10px;color:var(--purple);font-weight:700;width:50px" class="mono">14:32</div><div class="li-c"><div class="li-s"><strong style="color:var(--text)">Admin</strong> modif grade #JM-01</div></div></div><div class="li" style="margin-bottom:4px"><div style="font-size:10px;color:var(--purple);font-weight:700;width:50px" class="mono">14:15</div><div class="li-c"><div class="li-s"><strong style="color:var(--text)">Admin2</strong> ban #XX-99</div></div></div><div class="li"><div style="font-size:10px;color:var(--purple);font-weight:700;width:50px" class="mono">13:50</div><div class="li-c"><div class="li-s"><strong style="color:var(--text)">Admin</strong> restore #LP-01</div></div></div></div></div></div>
+<div class="pg" id="s-logs"><div class="log-t"><span class="lt">[09/03 14:33]</span> <span class="li-ok">[VENTE]</span> Maria R. encaissé $28 — Burger Shot<br><span class="lt">[09/03 14:30]</span> <span class="li-pur">[STAFF]</span> Admin modif grade #JM-01<br><span class="lt">[09/03 14:28]</span> <span class="li-ok">[CONNEXION]</span> John Martinez connecté<br><span class="lt">[09/03 14:25]</span> <span class="li-warn">[FISCAL]</span> Duvet Transport déclaration $120<br><span class="lt">[09/03 14:15]</span> <span class="li-err">[BAN]</span> Admin2 ban #XX-99 — Cheats<br><span class="lt">[09/03 14:10]</span> <span class="li-warn">[ALERTE]</span> Transaction suspecte $50,000<br><span class="lt">[09/03 13:45]</span> <span class="li-info">[EMS]</span> Dr. Rivera admit J. Martinez — Lit 1<br><span class="lt">[09/03 13:40]</span> <span class="li-err">[URGENCE]</span> Code Rouge — Fusillade Vespucci<br><span class="lt">[09/03 13:15]</span> <span class="li-info">[TAXI]</span> Course terminée $85 — Mike D.<br><span class="lt">[09/03 13:10]</span> <span class="li-ok">[GARAGE]</span> Benny terminé Zentorno — $3,500<br></div></div>
+<div class="pg" id="s-live"><div class="god-ban"><div class="pulse-dot" style="background:var(--green)"></div><div style="font-size:11px;font-weight:700;color:var(--green)">🟢 12 joueurs en ligne</div></div><div class="card"><div class="card-h"><span class="card-t">👥 Connectés</span></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:4px"><div style="font-weight:700;width:55px;font-size:10px" class="mono">#JM-01</div><div class="li-c"><div class="li-t">John Martinez</div><div class="li-s">Burger Shot • En service</div></div><div class="li-r"><span class="st st-g">2h15</span></div></div><div class="li" style="border-bottom:1px solid var(--border);margin-bottom:4px"><div style="font-weight:700;width:55px;font-size:10px" class="mono">#MD-01</div><div class="li-c"><div class="li-t">Mike Duvet</div><div class="li-s">Route — Taxi</div></div><div class="li-r"><span class="st st-a">3h20</span></div></div><div class="li"><div style="font-weight:700;width:55px;font-size:10px" class="mono">#DR-01</div><div class="li-c"><div class="li-t">Dr. Rivera</div><div class="li-s">Pillbox — EMS</div></div><div class="li-r"><span class="st st-b">4h10</span></div></div></div></div>
+<div class="pg" id="s-comptes"><div class="search-b"><span>🔍</span><input placeholder="Nom, ID, email…"></div><div class="card"><div class="card-h"><span class="card-t">👥 Comptes</span></div><div class="li" style="border:1px solid var(--border);border-radius:10px;margin-bottom:8px"><div style="width:36px;height:36px;border-radius:8px;background:var(--purple);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;color:white">JM</div><div class="li-c"><div class="li-t">John Martinez <span class="mono" style="color:var(--muted);font-size:9px">#JM-01</span></div><div class="li-s">Burger Shot • Expérimenté</div></div><div style="display:flex;gap:4px"><button class="btn btn-gh btn-s">✏️</button><button class="btn btn-gh btn-s">📂</button><button class="btn btn-gh btn-s" style="color:var(--red)">🚫</button></div></div><div class="li" style="border:1px solid rgba(239,68,68,0.2);border-radius:10px;background:rgba(239,68,68,0.02)"><div style="width:36px;height:36px;border-radius:8px;background:var(--red);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:10px;color:white">XX</div><div class="li-c"><div class="li-t" style="color:var(--red)">DarkGamer <span class="st st-r">BANNI</span></div><div class="li-s">Cheats • Banni 09/03</div></div><button class="btn btn-grn btn-s">♻️ Débannir</button></div></div></div>
+<div class="pg" id="s-bans"><div class="card" style="border-top:3px solid var(--red)"><div class="card-h"><span class="card-t">🚫 Bannir</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:14px"><div class="form-group"><label class="form-label">ID Joueur</label><input class="form-input" placeholder="#XX-99"></div><div class="form-group"><label class="form-label">Durée</label><select class="form-select"><option>Permanent</option><option>30 jours</option><option>7 jours</option><option>24h</option></select></div></div><div class="form-group"><label class="form-label">Raison</label><textarea class="form-input" style="min-height:60px;resize:vertical" placeholder="Raison…"></textarea></div><button class="btn btn-red" style="width:100%" onclick="alert('🚫 Compte banni')">Confirmer le Ban</button></div></div>
+<div class="pg" id="s-serv"><div class="stats-row"><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">🟢</div><div class="st-val" style="color:var(--green)">OK</div><div class="st-lab">Supabase</div></div><div class="st-card" style="border-left:3px solid var(--green)"><div class="st-icon">⚡</div><div class="st-val" style="color:var(--green)">42ms</div><div class="st-lab">Latence</div></div><div class="st-card" style="border-left:3px solid var(--blue)"><div class="st-icon">💾</div><div class="st-val" style="color:var(--blue)">2.1GB</div><div class="st-lab">Base</div></div><div class="st-card" style="border-left:3px solid var(--amber)"><div class="st-icon">📊</div><div class="st-val" style="color:var(--amber)">847</div><div class="st-lab">Req/h</div></div></div><div class="card"><div class="card-h"><span class="card-t">🖥️ Services</span></div><div class="li" style="margin-bottom:6px"><span style="color:var(--green)">🟢</span><div class="li-c"><div class="li-t">Supabase Auth</div></div><span class="st st-g">OK</span></div><div class="li" style="margin-bottom:6px"><span style="color:var(--green)">🟢</span><div class="li-c"><div class="li-t">Database PostgreSQL</div></div><span class="st st-g">OK</span></div><div class="li" style="margin-bottom:6px"><span style="color:var(--green)">🟢</span><div class="li-c"><div class="li-t">Edge Functions</div></div><span class="st st-g">OK</span></div><div class="li"><span style="color:var(--green)">🟢</span><div class="li-c"><div class="li-t">Realtime WebSocket</div></div><span class="st st-g">OK</span></div></div></div>
+<div class="pg" id="s-purge"><div class="card" style="border-top:3px solid var(--amber)"><div class="card-h"><span class="card-t">🧹 Auto-Purge</span><span class="st st-g">Actif</span></div><p style="font-size:11px;color:var(--muted);margin-bottom:16px">Comptes inactifs 4+ semaines supprimés automatiquement.</p><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:16px"><div style="background:var(--bg);padding:16px;border-radius:12px;text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Dernière purge</div><div style="font-weight:800;color:var(--green)">Aujourd'hui 04:00</div></div><div style="background:var(--bg);padding:16px;border-radius:12px;text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Supprimés</div><div style="font-weight:800;color:var(--amber)">3</div></div><div style="background:var(--bg);padding:16px;border-radius:12px;text-align:center"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Prochaine</div><div style="font-weight:800">Demain 04:00</div></div></div><button class="btn btn-pur" onclick="alert('🧹 Purge lancée')">🧹 Purge Manuelle</button></div></div>
+
+
+    </div><!-- /cnt -->
+</div><!-- /main-content -->
+</div><!-- /app -->
+
+<script>
+// ═══════════════════════════════════════
+//  🔑 SUPABASE — Remplace par tes clés
+// ═══════════════════════════════════════
+const SUPABASE_URL  = 'https://kmsoxgzmclyainyjxnag.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imttc294Z3ptY2x5YWlueWp4bmFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzODU3ODMsImV4cCI6MjA4Nzk2MTc4M30.gLv67qELVaakQQsgawEAg5zp9ay1OKxg_ih2FSsdhbs';
+
+let supabase = null;
+try {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+    console.log('✅ Supabase connecté');
+} catch(e) {
+    console.warn('⚠️ Supabase non configuré — Mode démo actif');
+}
+
+// ═══════════════════════════════════════
+let currentMode = 'citoyen';
+let loginMode = 'login';
+
+const titles = {
+    'c-dash':{t:'🏠 Tableau de Bord',b:'Citoyen › Vue d\'ensemble',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-msg':{t:'📭 Messagerie',b:'Citoyen › Communications',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-fact':{t:'📑 Factures',b:'Citoyen › Finances',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-loyer':{t:'🏠 Loyers',b:'Citoyen › Finances',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-rdv':{t:'📅 RDV',b:'Citoyen › Vie Citoyenne',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-sante':{t:'🏥 Carnet Santé',b:'Citoyen › Vie Citoyenne',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-lic':{t:'🪪 Licences',b:'Citoyen › Vie Citoyenne',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-cand':{t:'💼 Candidatures',b:'Citoyen › Emploi',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-vote':{t:'🗳️ Vote',b:'Citoyen › Vie Citoyenne',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-lois':{t:'⚖️ Lois & Justice',b:'Citoyen › Juridique',badge:'👤 Citoyen',color:'var(--amber)'},
+    'c-emploi':{t:'👔 Mon Emploi',b:'Citoyen › Entreprises',badge:'👔 Emploi',color:'var(--amber)'},
+    'g-dash':{t:'🏛️ Dashboard Gouv',b:'Gouvernement › Vue d\'ensemble',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-biz':{t:'🏢 Créer Entreprise',b:'Gouvernement › Entreprises',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-fisc':{t:'💰 Fiscalité',b:'Gouvernement › Fiscal',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-coffre':{t:'🔒 Coffre-Fort',b:'Gouvernement › Documents',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-lois':{t:'⚖️ Gestion Lois',b:'Gouvernement › Législation',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-cit':{t:'👥 Citoyens',b:'Gouvernement › Population',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-casier':{t:'🚔 Casiers',b:'Gouvernement › Justice',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-plaque':{t:'🚗 Plaques',b:'Gouvernement › Véhicules',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-comm':{t:'📢 Communiqués',b:'Gouvernement › Communication',badge:'🏛️ Gouv',color:'var(--red)'},
+    'g-votes':{t:'🗳️ Votes',b:'Gouvernement › Démocratie',badge:'🏛️ Gouv',color:'var(--red)'},
+    's-dash':{t:'📊 Panel Staff',b:'Staff › Vue d\'ensemble',badge:'⚡ Staff',color:'var(--purple)'},
+    's-logs':{t:'📜 Logs',b:'Staff › Surveillance',badge:'⚡ Staff',color:'var(--purple)'},
+    's-live':{t:'🔴 Live',b:'Staff › Temps Réel',badge:'⚡ Staff',color:'var(--purple)'},
+    's-comptes':{t:'👥 Comptes',b:'Staff › Gestion',badge:'⚡ Staff',color:'var(--purple)'},
+    's-bans':{t:'🚫 Bans',b:'Staff › Modération',badge:'⚡ Staff',color:'var(--purple)'},
+    's-serv':{t:'🖥️ Serveur',b:'Staff › Infrastructure',badge:'⚡ Staff',color:'var(--purple)'},
+    's-purge':{t:'🧹 Auto-Purge',b:'Staff › Maintenance',badge:'⚡ Staff',color:'var(--purple)'}
+};
+
+const modeDefaults = {citoyen:'c-dash',gouv:'g-dash',staff:'s-dash'};
+const modeClasses = {citoyen:'mode-citoyen',gouv:'mode-gouv',staff:'mode-staff'};
+const colorMap = {
+    'var(--amber)':['rgba(217,119,6,0.1)','rgba(217,119,6,0.2)','#d97706'],
+    'var(--red)':['rgba(220,38,38,0.1)','rgba(220,38,38,0.2)','#ef4444'],
+    'var(--purple)':['rgba(168,85,247,0.1)','rgba(168,85,247,0.2)','#a855f7']
+};
+
+// LOGIN
+function switchLoginTab(tab) {
+    loginMode = tab;
+    document.querySelectorAll('.login-tab').forEach((t,i) => t.classList.toggle('active', (tab==='login'?i===0:i===1)));
+    document.querySelectorAll('.register-extra').forEach(e => e.classList.toggle('show', tab==='register'));
+    document.getElementById('loginBtn').textContent = tab==='login' ? 'Se Connecter' : 'Créer mon Compte';
+    document.getElementById('loginFooter').innerHTML = tab==='login'
+        ? 'Pas encore de compte ? <a href="#" style="color:var(--amber);font-weight:700;text-decoration:none;" onclick="switchLoginTab(\'register\');return false;">Créer un accès</a>'
+        : 'Déjà inscrit ? <a href="#" style="color:var(--amber);font-weight:700;text-decoration:none;" onclick="switchLoginTab(\'login\');return false;">Se connecter</a>';
+}
+
+async function doLogin() {
+    const email = document.getElementById('email').value;
+    const pw = document.getElementById('password').value;
+    if (!email || !pw) { showLoginMsg('error','Tous les champs sont obligatoires.'); return; }
+
+    if (loginMode === 'register') {
+        const rpName = document.getElementById('rpName').value;
+        if (!rpName) { showLoginMsg('error','Nom RP obligatoire.'); return; }
+        if (pw !== document.getElementById('confirmPw').value) { showLoginMsg('error','Mots de passe différents.'); return; }
+
+        if (supabase) {
+            const { data, error } = await supabase.auth.signUp({
+                email, password: pw,
+                options: { data: { rp_name: rpName, role: 'citizen' } }
+            });
+            if (error) { showLoginMsg('error', error.message); return; }
+        }
+        showLoginMsg('success','Compte créé ! Vérifiez votre e-mail.');
+        return;
+    }
+
+    // Login
+    if (supabase) {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password: pw });
+        if (error) { showLoginMsg('error', error.message); return; }
+        // Mettre à jour last_login
+        await supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', data.user.id);
+    }
+
+    showLoginMsg('success','Connexion réussie…');
+    setTimeout(() => {
+        document.getElementById('loginOverlay').classList.add('hidden');
+        document.getElementById('modeBar').classList.add('show');
+        document.getElementById('app').classList.add('show');
+    }, 800);
+}
+
+function showLoginMsg(type, text) {
+    const el = document.getElementById('loginMsg');
+    el.style.display = 'block';
+    el.style.background = type==='error' ? 'rgba(220,38,38,0.1)' : 'rgba(34,197,94,0.1)';
+    el.style.border = '1px solid ' + (type==='error' ? 'rgba(220,38,38,0.2)' : 'rgba(34,197,94,0.2)');
+    el.style.color = type==='error' ? '#ef4444' : '#22c55e';
+    el.textContent = (type==='error'?'✕ ':'✓ ') + text;
+}
+
+async function doLogout() {
+    if (supabase) await supabase.auth.signOut();
+    document.getElementById('app').classList.remove('show');
+    document.getElementById('modeBar').classList.remove('show');
+    document.getElementById('loginOverlay').classList.remove('hidden');
+    document.getElementById('loginMsg').style.display = 'none';
+}
+
+// Auto-reconnexion si session existante
+(async function checkSession() {
+    if (!supabase) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+        document.getElementById('loginOverlay').classList.add('hidden');
+        document.getElementById('modeBar').classList.add('show');
+        document.getElementById('app').classList.add('show');
+    }
+})();
+
+// MODE SWITCHING
+function switchMode(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    document.querySelectorAll('.sidebar').forEach(s => s.style.display = 'none');
+    document.getElementById('sb-' + mode).style.display = 'flex';
+    const app = document.getElementById('app');
+    Object.values(modeClasses).forEach(c => app.classList.remove(c));
+    app.classList.add(modeClasses[mode]);
+    goTo(mode, modeDefaults[mode]);
+}
+
+// PAGE NAVIGATION
+function goTo(mode, pageId, navEl) {
+    document.querySelectorAll('.pg').forEach(p => p.classList.remove('active'));
+    document.getElementById(pageId).classList.add('active');
+    const sidebar = document.getElementById('sb-' + mode);
+    if (sidebar) sidebar.querySelectorAll('.nav-i').forEach(n => n.classList.remove('active'));
+    if (navEl) navEl.classList.add('active');
+    const info = titles[pageId];
+    if (info) {
+        document.getElementById('topTitle').textContent = info.t;
+        document.getElementById('topBread').textContent = info.b;
+        const badge = document.getElementById('topBadge');
+        badge.textContent = info.badge;
+        const c = colorMap[info.color] || colorMap['var(--amber)'];
+        badge.style.background = c[0]; badge.style.borderColor = c[1]; badge.style.color = c[2];
+    }
+    window.scrollTo(0, 0);
+}
+
+// BUSINESS HUB SWITCHER
+const bizColors = {
+    'biz-resto':'var(--amber)','biz-ems':'var(--cyan)','biz-taxi':'var(--yellow)',
+    'biz-mecano':'var(--orange)','biz-immo':'var(--green)','biz-ltd':'var(--green)','biz-club':'var(--purple)'
+};
+const bizColorHex = {
+    'biz-resto':'#d97706','biz-ems':'#06b6d4','biz-taxi':'#eab308',
+    'biz-mecano':'#f97316','biz-immo':'#22c55e','biz-ltd':'#22c55e','biz-club':'#a855f7'
+};
+
+function switchBiz(btn, bizId) {
+    document.querySelectorAll('.biz-sel').forEach(b => { b.style.background = 'none'; b.style.color = 'var(--muted)'; });
+    btn.style.background = bizColorHex[bizId] || '#d97706';
+    btn.style.color = ['biz-ems','biz-taxi','biz-mecano','biz-immo','biz-ltd'].includes(bizId) ? 'black' : 'black';
+    document.querySelectorAll('.biz-panel').forEach(p => { p.style.display = 'none'; p.classList.remove('active'); });
+    const panel = document.getElementById(bizId);
+    if (panel) { panel.style.display = 'block'; panel.classList.add('active'); }
+}
+</script>
+</body></html>
