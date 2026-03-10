@@ -2475,10 +2475,11 @@ function gEnt() {
       <td class="mono" style="font-size:.72rem">${e.id}</td>
       <td style="font-weight:600">${e.icon} ${e.name}</td>
       <td><span class="badge b-blue">${e.type}</span></td>
-      <td style="font-size:.82rem">${e.patron}<div class="mono" style="font-size:.68rem;color:var(--t3)">${e.patronId}</div></td>
-      <td>${DB.allJobs[e.name]?DB.allJobs[e.name].employees.filter(x=>x.status==='active').length:e.employees}</td>
+      <td style="font-size:.82rem">${e.patron||'—'}<div class="mono" style="font-size:.68rem;color:var(--t3)">${e.patronId||''}</div></td>
+      <td>${DB.allJobs[e.name]?DB.allJobs[e.name].employees.filter(x=>x.status==='active').length:0}</td>
       <td><span class="badge ${e.status==='active'?'b-green':e.status==='suspended'?'b-orange':'b-red'}">${e.status==='active'?'Active':e.status==='suspended'?'Suspendue':'Fermée'}</span></td>
       <td><div style="display:flex;gap:.2rem;flex-wrap:wrap">
+        <button class="btn btn-sm btn-outline" onclick="modalEditEnt(${i})" title="Modifier">✏️</button>
         <button class="btn btn-sm btn-outline" onclick="modalChangePatron(${i})" title="Changer le patron">👔</button>
         <button class="btn btn-sm btn-outline" style="border-color:rgba(59,130,246,.3);color:var(--blue)" onclick="modalGovPostJob(${i})" title="Publier une offre">📢</button>
         ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
@@ -2489,27 +2490,60 @@ function gEnt() {
   return h;
 }
 function modalCreateEnt() {
-  const citOpts = DB.citizens.map(c => `<option value="${c.id}">${c.name} (${c.id})</option>`).join('');
+  const citOpts = '<option value="">— Aucun patron pour le moment —</option>' + DB.citizens.map(c => `<option value="${c.id}">${c.name} (${c.id})${c.job?' — '+c.job:''}</option>`).join('');
   modal(`<div class="modal-t">🏢 Créer une Entreprise</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="ceNom" placeholder="Nom de l'entreprise"></div><div class="fg"><label>Icône</label><input id="ceIco" placeholder="🏢" value="🏢" style="width:60px"></div></div>
     <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Autre</option></select></div>
-    <div class="fg"><label>👔 Patron — Sélectionner un citoyen</label><select id="cePatronId">${citOpts}</select></div>
+    <div class="fg"><label>👔 Patron (optionnel)</label><select id="cePatronId">${citOpts}</select></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="createEnt()">Créer</button></div>`);
 }
 function createEnt() {
-  const n = document.getElementById('ceNom').value || 'Nouvelle Entreprise';
+  const n = document.getElementById('ceNom').value.trim();
+  if (!n) { err('Nom de l\'entreprise requis.'); return; }
   const pid = document.getElementById('cePatronId').value;
   const ico = document.getElementById('ceIco').value||'🏢';
-  const cit = DB.citizens.find(c=>c.id===pid);
-  DB.enterprises.push({id:'ENT-'+String(DB.enterprises.length+1).padStart(3,'0'), name:n, icon:ico, type:document.getElementById('ceType').value, patron:cit?cit.name:'—', patronId:pid, status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:1});
-  // Create the job data structure so employees can work
+  const cit = pid ? DB.citizens.find(c=>c.id===pid) : null;
+  DB.enterprises.push({id:'ENT-'+String(DB.enterprises.length+1).padStart(3,'0'), name:n, icon:ico, type:document.getElementById('ceType').value, patron:cit?cit.name:'', patronId:pid||'', status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:cit?1:0});
   createEnterpriseData(n, ico);
-  // Add patron as first employee
   if (cit) {
     cit.job = n; cit.role = 'Patron';
     DB.allJobs[n].employees.push({id:cit.id, name:cit.name, grade:0, phone:cit.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
   }
-  closeModal(); toast(n + ' créée — Patron: ' + (cit?cit.name:'—')); goGov('gent');
+  closeModal(); toast(n + ' créée' + (cit?' — Patron: '+cit.name:'')); goGov('gent');
+}
+function modalEditEnt(idx) {
+  const e = DB.enterprises[idx];
+  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Autre'];
+  const typeOpts = types.map(function(t){return '<option '+(t===e.type?'selected':'')+'>'+t+'</option>'}).join('');
+  modal(`<div class="modal-t">✏️ Modifier — ${e.icon} ${e.name}</div>
+    <div class="row"><div class="fg"><label>Nom</label><input id="eeNom" value="${e.name}"></div><div class="fg"><label>Icône</label><input id="eeIco" value="${e.icon}" style="width:60px"></div></div>
+    <div class="fg"><label>Type d'activité</label><select id="eeType">${typeOpts}</select></div>
+    <div class="fg"><label>Statut</label><select id="eeStatus"><option value="active" ${e.status==='active'?'selected':''}>Active</option><option value="suspended" ${e.status==='suspended'?'selected':''}>Suspendue</option><option value="closed" ${e.status==='closed'?'selected':''}>Fermée</option></select></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveEditEnt(${idx})">Sauvegarder</button></div>`);
+}
+function saveEditEnt(idx) {
+  const e = DB.enterprises[idx];
+  const oldName = e.name;
+  const newName = document.getElementById('eeNom').value.trim();
+  if (!newName) { err('Nom requis.'); return; }
+  const newIco = document.getElementById('eeIco').value || '🏢';
+  e.name = newName;
+  e.icon = newIco;
+  e.type = document.getElementById('eeType').value;
+  e.status = document.getElementById('eeStatus').value;
+  // If name changed, update allJobs reference + citizens
+  if (oldName !== newName && DB.allJobs[oldName]) {
+    DB.allJobs[newName] = DB.allJobs[oldName];
+    DB.allJobs[newName].company = newName;
+    DB.allJobs[newName].icon = newIco;
+    delete DB.allJobs[oldName];
+    // Update citizens who work there
+    DB.citizens.forEach(function(c) { if (c.job === oldName) c.job = newName; });
+    // Update job offers
+    DB.jobs.forEach(function(j) { if (j.company === oldName) { j.company = newName; j.icon = newIco; } });
+  }
+  if (DB.allJobs[newName]) DB.allJobs[newName].icon = newIco;
+  closeModal(); toast(newName + ' mis à jour'); goGov('gent');
 }
 function delEnterprise(idx) {
   const e = DB.enterprises[idx];
