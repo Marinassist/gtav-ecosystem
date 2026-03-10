@@ -181,9 +181,10 @@ tr:hover td{background:rgba(240,180,41,.02)}
         <div class="fg"><label>Mot de passe</label><input id="lPass" type="password" placeholder="••••••••"></div>
         <button class="btn btn-gold" onclick="doLogin()">Se Connecter</button>
         <div style="text-align:center;margin-top:.7rem;font-size:.7rem;color:var(--t3)">
-          Démo Patron Taxi: <strong style="color:var(--t2)">SA-1001</strong> / <strong style="color:var(--t2)">pass</strong><br>
-          Démo Patron EMS: <strong style="color:var(--t2)">SA-2001</strong> / <strong style="color:var(--t2)">pass</strong>
+          Démo Taxi: <strong style="color:var(--t2)">SA-1001</strong> / <strong style="color:var(--t2)">pass</strong><br>
+          Démo EMS: <strong style="color:var(--t2)">SA-2001</strong> / <strong style="color:var(--t2)">pass</strong>
         </div>
+        <div style="text-align:center;margin-top:.5rem"><button class="btn btn-sm btn-outline" style="font-size:.65rem;padding:.2rem .5rem;opacity:.5" onclick="resetAllData()">🔄 Réinitialiser toutes les données</button></div>
       </div>
       <!-- INSCRIPTION -->
       <div id="citizenRegister" style="display:none">
@@ -252,6 +253,48 @@ tr:hover td{background:rgba(240,180,41,.02)}
 </div>
 
 <script>
+// ============ PERSISTENCE ============
+const SAVE_KEY = 'sa_ecosystem';
+function saveDB() {
+  try {
+    const data = {
+      citizens: DB.citizens,
+      allJobs: DB.allJobs,
+      enterprises: DB.enterprises,
+      laws: DB.laws,
+      decrees: DB.decrees,
+      defcon: DB.defcon,
+      defconLog: DB.defconLog,
+      legalCodes: DB.legalCodes,
+      healthRecords: DB.healthRecords,
+      citizenSalaries: DB.citizenSalaries,
+      tempPatients: DB.tempPatients,
+      taxConfig: DB.taxConfig,
+      govBudget: DB.govBudget,
+      govTaxDeclarations: DB.govTaxDeclarations,
+      vault: DB.vault,
+      messages: DB.messages,
+      jobs: DB.jobs,
+      voted: DB.voted,
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+  } catch(e) { console.warn('Save failed:', e); }
+}
+function loadSavedDB() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    Object.keys(data).forEach(k => { if (data[k] !== undefined) DB[k] = data[k]; });
+    return true;
+  } catch(e) { console.warn('Load failed:', e); return false; }
+}
+function resetAllData() {
+  localStorage.removeItem(SAVE_KEY);
+  localStorage.removeItem('sa_lastLogin');
+  location.reload();
+}
+
 // ============ DATA ============
 const DB = {
   user: null,
@@ -593,12 +636,25 @@ function doRegister() {
   if (DB.citizens.find(c => c.name.toLowerCase() === name.toLowerCase())) { err('Ce nom est déjà pris. Utilisez la connexion si vous avez déjà un compte.'); return; }
   const citizen = { id: genCitizenId(), name, phone: phone || '555-0000', pass, registered: new Date().toLocaleDateString('fr-FR'), job: null, role: null };
   DB.citizens.push(citizen);
+  saveDB();
   loginAs(citizen);
-  toast('Compte créé — Votre ID: ' + citizen.id);
+  // Show prominent modal with their ID
+  setTimeout(() => {
+    modal(`<div style="text-align:center;padding:.5rem 0">
+      <div style="font-size:2.5rem;margin-bottom:.5rem">🎉</div>
+      <div style="font-size:1.1rem;font-weight:700;margin-bottom:.3rem">Compte créé avec succès !</div>
+      <div style="font-size:.85rem;color:var(--t2);margin-bottom:1rem">Voici votre identifiant citoyen :</div>
+      <div style="font-family:'Rajdhani',monospace;font-size:2.5rem;font-weight:700;color:var(--gold);background:var(--input);border:2px solid var(--gold);border-radius:12px;padding:.5rem 1.5rem;display:inline-block;margin-bottom:.8rem">${citizen.id}</div>
+      <div style="font-size:.78rem;color:var(--red);font-weight:600">⚠️ Notez-le ! Il vous servira à chaque connexion.</div>
+      <div style="font-size:.72rem;color:var(--t3);margin-top:.3rem">Mot de passe: celui que vous avez choisi</div>
+      <div style="margin-top:1rem"><button class="btn btn-gold" onclick="closeModal()">J'ai noté mon ID ✓</button></div>
+    </div>`);
+  }, 300);
 }
 
 function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
+  localStorage.setItem('sa_lastLogin', citizen.id);
   loadJob();
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.add('on');
@@ -659,6 +715,7 @@ function buildNav() {
 }
 
 function go(p) {
+  saveDB(); // Auto-persist all data
   DB.currentPage = p;
   document.querySelectorAll('.nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('page');c.style.animation='none';c.offsetHeight;c.style.animation='fadeIn .25s ease';
@@ -2244,6 +2301,7 @@ function buildGovNav() {
   });
 }
 function goGov(p) {
+  saveDB(); // Auto-persist all data
   document.querySelectorAll('#gNav .nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('gPage');c.style.animation='none';c.offsetHeight;c.style.animation='fadeIn .25s ease';
   const T={gdash:'Panneau de Contrôle',gcit:'Registre des Citoyens',gent:'Gestion des Entreprises',gtax:'Configuration Fiscale',gbudget:'Budget de l\'État',gdecree:'Décrets & Annonces',gcodes:'Gestion des Codes & Lois',gdefcon:'Sécurité — DEFCON',gvault:'Coffre-Fort Sécurisé',gvotes:'Lois & Votes Citoyens'};
@@ -2724,7 +2782,14 @@ function gVotes() {
 }
 
 // ============ INIT ============
-initAllJobs();
+const loaded = loadSavedDB();
+if (!loaded) { initAllJobs(); saveDB(); }
+// Restore last login ID hint
+const lastId = localStorage.getItem('sa_lastLogin');
+if (lastId) { 
+  const inp = document.getElementById('lId');
+  if (inp) inp.value = lastId;
+}
 </script>
 </body>
 </html>
