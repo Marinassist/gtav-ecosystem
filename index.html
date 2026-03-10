@@ -260,88 +260,67 @@ const SUPABASE_URL = 'https://xodqbotgcglsbepglthd.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvZHFib3RnY2dsc2JlcGdsdGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTI1MjgsImV4cCI6MjA4ODcyODUyOH0.aLbZ_sOtSz5Ki8M4QrDg3Fz_aGYuMQf_BODRNL1SgbI';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ============ PERSISTENCE — SUPABASE ============
+// ============ PERSISTENCE ============
 let _saving = false;
 let _saveQueued = false;
-let _remoteSync = false; // true when receiving realtime update — prevents re-saving
+let _remoteSync = false;
+let _saveFails = 0;
+let _supabaseOK = false;
+
+function getPayload() {
+  return {
+    citizens: DB.citizens, allJobs: DB.allJobs, enterprises: DB.enterprises,
+    laws: DB.laws, decrees: DB.decrees, defcon: DB.defcon, defconLog: DB.defconLog,
+    legalCodes: DB.legalCodes, healthRecords: DB.healthRecords,
+    citizenSalaries: DB.citizenSalaries, tempPatients: DB.tempPatients,
+    taxConfig: DB.taxConfig, govBudget: DB.govBudget,
+    govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault,
+    messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
+  };
+}
 
 function saveDB() {
   if (_remoteSync) return;
+  var payload = getPayload();
+  // ALWAYS save to localStorage (instant, never fails)
+  try { localStorage.setItem('sa_data', JSON.stringify(payload)); } catch(e) {}
+  // Try Supabase via RPC in background
+  if (_saveFails > 5 || !_supabaseOK) return;
   if (_saving) { _saveQueued = true; return; }
   _saving = true;
-  const payload = {
-    citizens: DB.citizens,
-    allJobs: DB.allJobs,
-    enterprises: DB.enterprises,
-    laws: DB.laws,
-    decrees: DB.decrees,
-    defcon: DB.defcon,
-    defconLog: DB.defconLog,
-    legalCodes: DB.legalCodes,
-    healthRecords: DB.healthRecords,
-    citizenSalaries: DB.citizenSalaries,
-    tempPatients: DB.tempPatients,
-    taxConfig: DB.taxConfig,
-    govBudget: DB.govBudget,
-    govTaxDeclarations: DB.govTaxDeclarations,
-    vault: DB.vault,
-    messages: DB.messages,
-    jobs: DB.jobs,
-    voted: DB.voted,
-  };
-  // Always backup to localStorage (instant, reliable)
-  try { localStorage.setItem('sa_data', JSON.stringify(payload)); } catch(e) {}
-  // Push to Supabase in background
-  sb.from('shared_state').upsert({ id: 1, data: payload, updated_at: new Date().toISOString(), updated_by: DB.user?.id || 'anon' })
-    .then(({ error }) => {
+  sb.rpc('set_shared_state', { new_data: payload, who: DB.user ? DB.user.id : 'anon' })
+    .then(function(res) {
       _saving = false;
-      if (error) {
-        console.error('💾❌ Supabase save failed:', error.message, error.details || '');
-        updateSyncBadge('err');
-      } else {
-        console.log('💾✅ Saved to Supabase');
-        updateSyncBadge('ok');
-      }
+      if (res.error) { _saveFails++; updateSyncBadge('err'); }
+      else { _saveFails = 0; updateSyncBadge('ok'); }
       if (_saveQueued) { _saveQueued = false; saveDB(); }
     })
-    .catch(e => { console.error('💾❌ Save crash:', e); _saving = false; updateSyncBadge('err'); });
-}
-
-function updateSyncBadge(state) {
-  let el = document.getElementById('syncBadge');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'syncBadge';
-    el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.6rem;padding:.2rem .5rem;border-radius:4px;z-index:9999;opacity:.7';
-    document.body.appendChild(el);
-  }
-  if (state === 'ok') { el.style.background='rgba(34,197,94,.15)'; el.style.color='#22c55e'; el.textContent='🟢 Sync OK'; }
-  else if (state === 'err') { el.style.background='rgba(239,68,68,.15)'; el.style.color='#ef4444'; el.textContent='🔴 Sync erreur'; }
-  // Auto-hide after 3s
-  clearTimeout(el._t); el._t = setTimeout(() => { el.textContent = ''; }, 3000);
+    .catch(function() { _saving = false; _saveFails++; });
 }
 
 async function loadFromSupabase() {
   try {
-    const { data, error } = await sb.from('shared_state').select('data').eq('id', 1).single();
-    if (!error && data && data.data && Object.keys(data.data).length > 0) {
-      const d = data.data;
-      Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
-      console.log('📥✅ Loaded from Supabase');
+    var res = await sb.rpc('get_shared_state');
+    if (!res.error && res.data && typeof res.data === 'object' && res.data.citizens) {
+      var d = res.data;
+      Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
+      _supabaseOK = true;
       return true;
     }
-    if (error) console.warn('📥 Supabase:', error.message);
+    if (!res.error) _supabaseOK = true; // RPC works but empty
+    return false;
   } catch(e) {
-    console.warn('📥 Supabase unreachable:', e.message);
+    return false;
   }
-  // Fallback: localStorage
+}
+
+function loadFromLocal() {
   try {
-    const local = localStorage.getItem('sa_data');
-    if (local) {
-      const d = JSON.parse(local);
-      if (d && d.citizens) {
-        Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
-        console.log('📥✅ Loaded from localStorage');
+    var raw = localStorage.getItem('sa_data');
+    if (raw) {
+      var d = JSON.parse(raw);
+      if (d && d.citizens && d.citizens.length > 0) {
+        Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
         return true;
       }
     }
@@ -352,46 +331,43 @@ async function loadFromSupabase() {
 function resetAllData() {
   localStorage.removeItem('sa_data');
   localStorage.removeItem('sa_lastLogin');
-  sb.from('shared_state').upsert({ id: 1, data: {}, updated_at: new Date().toISOString() })
-    .then(() => location.reload())
-    .catch(() => location.reload());
+  sb.rpc('set_shared_state', { new_data: {} }).then(function() { location.reload(); }).catch(function() { location.reload(); });
 }
 
-// ============ REALTIME — Sync quand un autre joueur modifie ============
+function updateSyncBadge(state) {
+  var el = document.getElementById('syncBadge');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'syncBadge';
+    el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.6rem;padding:.2rem .5rem;border-radius:4px;z-index:9999;opacity:.7';
+    document.body.appendChild(el);
+  }
+  if (state === 'ok') { el.style.background='rgba(34,197,94,.15)'; el.style.color='#22c55e'; el.textContent='🟢 Sync'; }
+  else { el.style.background='rgba(239,68,68,.15)'; el.style.color='#ef4444'; el.textContent='🔴 Local'; }
+  clearTimeout(el._t); el._t = setTimeout(function() { el.textContent = ''; }, 3000);
+}
+
+// ============ REALTIME ============
 function setupRealtime() {
-  sb.channel('sync')
-    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, payload => {
-      const d = payload.new.data;
-      // Ne pas écraser si c'est nous qui avons sauvegardé
-      if (payload.new.updated_by === DB.user?.id) return;
-      if (d && Object.keys(d).length > 0) {
-        // Merge les données partagées (pas les données UI locales)
-        const sharedKeys = ['citizens','allJobs','enterprises','laws','decrees','defcon','defconLog','legalCodes','healthRecords','citizenSalaries','tempPatients','taxConfig','govBudget','govTaxDeclarations','vault','messages','jobs','voted'];
-        sharedKeys.forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
-        // Re-render la page courante
-        _remoteSync = true;
-        if (DB.user) {
-          loadJob(); // Re-sync le job au cas où on a été embauché/viré
-          buildNav();
-          if (DB.currentPage) {
-            const c = document.getElementById('page');
-            if (c && c.innerHTML) go(DB.currentPage);
-          }
-        }
-        // Gov side too
-        const gPage = document.getElementById('gPage');
-        if (gPage && gPage.innerHTML && DB.govUser) {
-          const govPages = document.querySelectorAll('#gNav .nav-i.on');
-          if (govPages.length) goGov(govPages[0].dataset.p);
-        }
-        _remoteSync = false;
-        console.log('🔄 Sync reçue de:', payload.new.updated_by);
+  sb.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, function(payload) {
+    if (DB.user && payload.new.updated_by === DB.user.id) return;
+    var d = payload.new.data;
+    if (d && d.citizens) {
+      _remoteSync = true;
+      Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
+      try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
+      if (DB.user) { loadJob(); buildNav(); if (DB.currentPage) go(DB.currentPage); }
+      var gPage = document.getElementById('gPage');
+      if (gPage && gPage.innerHTML && DB.govUser) {
+        var sel = document.querySelector('#gNav .nav-i.on');
+        if (sel) goGov(sel.dataset.p);
       }
-    })
-    .subscribe();
+      _remoteSync = false;
+    }
+  }).subscribe();
 }
 
-// ============ DATA ============
+// ============ DATA ============// ============ DATA ============
 const DB = {
   user: null,
   voted: {},
@@ -2930,68 +2906,55 @@ function gVotes() {
 
 // ============ INIT ============
 (async function() {
-  const authEl = document.getElementById('auth');
-  const statusEl = document.getElementById('connStatus');
+  var statusEl = document.getElementById('connStatus');
   if (statusEl) statusEl.innerHTML = '⏳ Chargement...';
 
-  // STEP 1: Try localStorage first (instant, <1ms)
-  let loaded = false;
-  try {
-    const local = localStorage.getItem('sa_data');
-    if (local) {
-      const d = JSON.parse(local);
-      if (d && d.citizens && d.citizens.length > 0) {
-        Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
-        loaded = true;
-        console.log('⚡ Loaded from localStorage');
-      }
-    }
-  } catch(e) {}
+  // 1. Load from localStorage first (instant)
+  var loaded = loadFromLocal();
+  if (loaded) console.log('⚡ Loaded from localStorage');
 
-  // STEP 2: If no local data, try Supabase with 3s timeout
+  // 2. If no local data, try Supabase (3s max)
   if (!loaded) {
     try {
       loaded = await Promise.race([
         loadFromSupabase(),
-        new Promise(r => setTimeout(() => r(false), 3000))
+        new Promise(function(r) { setTimeout(function() { r(false); }, 3000); })
       ]);
     } catch(e) {}
   }
 
-  // STEP 3: If still nothing, init demo data
+  // 3. If still nothing, fresh demo data
   if (!loaded) {
     initAllJobs();
-    console.log('🆕 Fresh demo data initialized');
+    console.log('🆕 Demo data initialized');
   }
 
-  // STEP 4: Save immediately (to both localStorage and Supabase)
+  // 4. Save to both (localStorage instant + Supabase background)
   saveDB();
 
-  // STEP 5: Realtime sync in background
+  // 5. Start realtime sync
   try { setupRealtime(); } catch(e) {}
 
-  // STEP 6: Restore login hint
-  const lastId = localStorage.getItem('sa_lastLogin');
-  if (lastId) { const inp = document.getElementById('lId'); if (inp) inp.value = lastId; }
+  // 6. Restore login hint
+  var lastId = localStorage.getItem('sa_lastLogin');
+  if (lastId) { var inp = document.getElementById('lId'); if (inp) inp.value = lastId; }
 
-  // STEP 7: Ready
-  if (authEl) authEl.style.opacity = '1';
-  if (statusEl) statusEl.innerHTML = '🟢 ' + DB.citizens.length + ' citoyens — ' + DB.enterprises.length + ' entreprises';
+  // 7. Ready
+  if (statusEl) statusEl.innerHTML = (_supabaseOK ? '🟢' : '🟡') + ' ' + DB.citizens.length + ' citoyens — ' + DB.enterprises.length + ' entreprises';
   console.log('🏛️ San Andreas prêt — ' + DB.citizens.length + ' citoyens');
 
-  // STEP 8: Background sync — fetch Supabase and merge if newer (non-blocking)
-  if (loaded) {
-    setTimeout(async () => {
+  // 8. Background: check if Supabase has newer data
+  if (loaded && !_supabaseOK) {
+    setTimeout(async function() {
       try {
-        const { data } = await sb.from('shared_state').select('data, updated_at').eq('id', 1).single();
-        if (data && data.data && data.data.citizens && data.data.citizens.length > DB.citizens.length) {
-          const d = data.data;
-          Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
-          console.log('🔄 Background sync: Supabase had newer data');
-          if (DB.user && DB.currentPage) { loadJob(); buildNav(); go(DB.currentPage); }
+        var sbLoaded = await loadFromSupabase();
+        if (sbLoaded && DB.citizens.length > 0) {
+          saveDB();
+          var s = document.getElementById('connStatus');
+          if (s) s.innerHTML = '🟢 Synchronisé — ' + DB.citizens.length + ' citoyens';
         }
       } catch(e) {}
-    }, 1500);
+    }, 2000);
   }
 })();
 </script>
