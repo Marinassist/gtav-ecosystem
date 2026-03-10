@@ -2139,7 +2139,7 @@ function pWGrades() {
   h += '</tr></thead><tbody>';
   j.grades.forEach((g,i) => {
     h += `<tr><td>${i+1}</td><td style="font-weight:600"><span class="badge b-gold">${g.name}</span></td><td style="font-size:.8rem">${getPayLabel(g)}</td><td class="mono" style="color:${g.prime?'var(--purple)':'var(--t3)'}">${g.prime?'+$'+g.prime:'—'}</td><td>${g.canPOS?'<span class="badge b-green">Oui</span>':'<span class="badge b-red">Non</span>'}</td><td>${g.canStock?'<span class="badge b-green">Oui</span>':'<span class="badge b-red">Non</span>'}</td><td>${g.canManage?'<span class="badge b-green">Oui</span>':'<span class="badge b-red">Non</span>'}</td>`;
-    if (myGrade.canEditGrades) h += `<td>${i>0?`<button class="btn btn-sm btn-outline" onclick="modalEditGrade(${i})">✏️</button>`:'<span style="font-size:.72rem;color:var(--t3)">Patron</span>'}</td>`;
+    if (myGrade.canEditGrades) h += `<td><button class="btn btn-sm btn-outline" onclick="modalEditGrade(${i})">✏️</button></td>`;
     h += '</tr>';
   });
   h += '</tbody></table></div>';
@@ -2185,11 +2185,31 @@ function modalEditGrade(idx) {
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egPOS" ${g.canPOS?'checked':''}> Accès caisse</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egHire" ${g.canHire?'checked':''}> Peut embaucher</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egFire" ${g.canFire?'checked':''}> Peut licencier</label>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egEditGrades" ${g.canEditGrades?'checked':''}> Gérer les grades</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egStock" ${g.canStock?'checked':''}> Accès stock</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egArticles" ${g.canArticles?'checked':''}> Gérer les articles</label>
-      <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egPatients" ${g.canPatients?'checked':''}> Dossiers patients</label>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egPatients" ${g.canPatients?'checked':''}> Dossiers patients (EMS)</label>
     </div>
-    <div class="modal-acts"><button class="btn btn-sm btn-red" onclick="DB.job.grades.splice(${idx},1);DB.job.employees.forEach(e=>{if(e.grade>=${idx})e.grade=Math.max(0,e.grade-1)});closeModal();toast('Grade supprimé');go('wgrades')">Supprimer</button><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const g=DB.job.grades[${idx}];g.name=document.getElementById('egName').value;g.payType=document.getElementById('egPayType').value;g.fixe=parseInt(document.getElementById('egFixe').value)||0;g.commission=parseInt(document.getElementById('egComm').value)||0;g.prime=parseInt(document.getElementById('egPrime').value)||0;g.canManage=document.getElementById('egManage').checked;g.canHire=document.getElementById('egHire').checked;g.canFire=document.getElementById('egFire').checked;g.canStock=document.getElementById('egStock').checked;g.canArticles=document.getElementById('egArticles').checked;g.canPatients=document.getElementById('egPatients').checked;g.canPOS=document.getElementById('egPOS').checked;closeModal();toast('Grade mis à jour');go('wgrades')">Sauvegarder</button></div>`);
+    <div class="modal-acts">${idx>0?`<button class="btn btn-sm btn-red" onclick="DB.job.grades.splice(${idx},1);DB.job.employees.forEach(e=>{if(e.grade>=${idx})e.grade=Math.max(0,e.grade-1)});closeModal();toast('Grade supprimé');go('wgrades')">Supprimer</button>`:''}<button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveGradeEdit(${idx})">Sauvegarder</button></div>`);
+}
+function saveGradeEdit(idx) {
+  var g = DB.job.grades[idx];
+  g.name = document.getElementById('egName').value || g.name;
+  g.payType = document.getElementById('egPayType').value;
+  g.fixe = parseInt(document.getElementById('egFixe').value) || 0;
+  g.commission = parseInt(document.getElementById('egComm').value) || 0;
+  g.prime = parseInt(document.getElementById('egPrime').value) || 0;
+  g.canManage = document.getElementById('egManage').checked;
+  g.canHire = document.getElementById('egHire').checked;
+  g.canFire = document.getElementById('egFire').checked;
+  g.canEditGrades = document.getElementById('egEditGrades').checked;
+  g.canStock = document.getElementById('egStock').checked;
+  g.canArticles = document.getElementById('egArticles').checked;
+  g.canPatients = document.getElementById('egPatients').checked;
+  g.canPOS = document.getElementById('egPOS').checked;
+  // Update current user's permissions if editing own grade
+  if (idx === DB.job.gradeIndex) DB.job.role = g.name;
+  closeModal(); toast('Grade «' + g.name + '» mis à jour'); buildNav(); go('wgrades');
 }
 
 // ============ WORK: CANDIDATURES ============
