@@ -181,7 +181,6 @@ tr:hover td{background:rgba(240,180,41,.02)}
         <div class="fg"><label>Identifiant Citoyen</label><input id="lId" placeholder="Ex: SA-4000"></div>
         <div class="fg"><label>Mot de passe</label><input id="lPass" type="password" placeholder="••••••••"></div>
         <button class="btn btn-gold" onclick="doLogin()">Se Connecter</button>
-        <div style="text-align:center;margin-top:.5rem"><button class="btn btn-sm btn-outline" style="font-size:.65rem;padding:.2rem .5rem;opacity:.5" onclick="resetAllData()">🔄 Réinitialiser toutes les données</button></div>
         <div id="connStatus" style="text-align:center;margin-top:.5rem;font-size:.65rem;color:var(--t3)">⏳ Connexion à Supabase...</div>
       </div>
       <!-- INSCRIPTION -->
@@ -2336,6 +2335,7 @@ function gCitizens() {
         <button class="btn btn-sm btn-outline" onclick="modalAssignPatron('${c.id}')" title="Nommer Patron">👔</button>
         ${c.job ? `<button class="btn btn-sm btn-red" onclick="removeFromJob('${c.id}')" title="Retirer de l'emploi" style="padding:.2rem .4rem">🚫</button>` : ''}
         <button class="btn btn-sm btn-outline" onclick="modalResetPass('${c.id}')" title="Réinitialiser MDP">🔑</button>
+        <button class="btn btn-sm btn-red" onclick="deleteCitizen('${c.id}','${c.name}')" title="Supprimer" style="padding:.2rem .4rem">🗑️</button>
       </div></td>
     </tr>`;
   });
@@ -2354,23 +2354,49 @@ function removeFromJob(citizenId) {
   const c = DB.citizens.find(x=>x.id===citizenId);
   if (!c || !c.job) return;
   confirmDel('Retirer ' + c.name + ' de ' + c.job + ' ? ('+c.role+')', function(){
-    // Remove from allJobs employee list
     const jobData = DB.allJobs[c.job];
     if (jobData) {
       const emp = jobData.employees.find(function(e){return e.id===citizenId});
       if (emp) emp.status = 'inactive';
     }
-    // If patron, clear enterprise patron
     if (c.role === 'Patron') {
       const ent = DB.enterprises.find(function(e){return e.name===c.job});
       if (ent) { ent.patron = '—'; ent.patronId = ''; }
     }
-    // Update enterprise employee count
     const ent2 = DB.enterprises.find(function(e){return e.name===c.job});
     if (ent2 && DB.allJobs[c.job]) ent2.employees = DB.allJobs[c.job].employees.filter(function(e){return e.status==='active'}).length;
-    // Clear citizen job
     c.job = null; c.role = null;
     toast(c.name + ' retiré de son emploi');
+    goGov('gcit');
+  });
+}
+function deleteCitizen(citizenId, citizenName) {
+  confirmDel('Supprimer définitivement ' + citizenName + ' (' + citizenId + ') ? Cette action est irréversible.', function(){
+    const c = DB.citizens.find(function(x){return x.id===citizenId});
+    if (c && c.job) {
+      // Remove from enterprise
+      var jobData = DB.allJobs[c.job];
+      if (jobData) {
+        var emp = jobData.employees.find(function(e){return e.id===citizenId});
+        if (emp) emp.status = 'inactive';
+      }
+      // If patron, clear
+      if (c.role === 'Patron') {
+        var ent = DB.enterprises.find(function(e){return e.name===c.job});
+        if (ent) { ent.patron = '—'; ent.patronId = ''; }
+      }
+    }
+    // Remove health records
+    delete DB.healthRecords[citizenId];
+    delete DB.citizenSalaries[citizenId];
+    // Remove votes
+    delete DB.voted[citizenId];
+    // Remove messages
+    DB.messages = DB.messages.filter(function(m){return m.from_citizen_id !== citizenId});
+    // Remove citizen
+    var idx = DB.citizens.findIndex(function(x){return x.id===citizenId});
+    if (idx > -1) DB.citizens.splice(idx, 1);
+    toast(citizenName + ' supprimé définitivement');
     goGov('gcit');
   });
 }
