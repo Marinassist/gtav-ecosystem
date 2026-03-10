@@ -274,7 +274,7 @@ function getPayload() {
     legalCodes: DB.legalCodes, healthRecords: DB.healthRecords,
     citizenSalaries: DB.citizenSalaries, tempPatients: DB.tempPatients,
     taxConfig: DB.taxConfig, govBudget: DB.govBudget,
-    govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault,
+    govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault, defconProtos: DB.defconProtos,
     messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
   };
 }
@@ -348,23 +348,52 @@ function updateSyncBadge(state) {
 }
 
 // ============ REALTIME ============
+var _lastSync = 0;
+var _pendingSync = null;
 function setupRealtime() {
   sb.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, function(payload) {
     if (DB.user && payload.new.updated_by === DB.user.id) return;
-    var d = payload.new.data;
-    if (d && d.citizens) {
-      _remoteSync = true;
-      Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
-      try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
-      if (DB.user) { loadJob(); buildNav(); if (DB.currentPage) go(DB.currentPage); }
-      var gPage = document.getElementById('gPage');
-      if (gPage && gPage.innerHTML && DB.govUser) {
-        var sel = document.querySelector('#gNav .nav-i.on');
-        if (sel) goGov(sel.dataset.p);
-      }
-      _remoteSync = false;
+    var now = Date.now();
+    // Throttle: max 1 sync every 10 seconds
+    if (now - _lastSync < 10000) {
+      // Queue the latest data, will apply after cooldown
+      if (_pendingSync) clearTimeout(_pendingSync);
+      _pendingSync = setTimeout(function() { applyRemoteSync(payload.new.data); }, 10000 - (now - _lastSync));
+      return;
     }
+    applyRemoteSync(payload.new.data);
   }).subscribe();
+}
+function applyRemoteSync(d) {
+  if (!d || !d.citizens) return;
+  _lastSync = Date.now();
+  _remoteSync = true;
+  Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
+  try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
+  // Silent re-render — no animation, no flash
+  if (DB.user) {
+    loadJob(); buildNav();
+    if (DB.currentPage) {
+      var c = document.getElementById('page');
+      if (c) { c.style.animation = 'none'; c.innerHTML = getPageContent(DB.currentPage); }
+    }
+  }
+  var gPage = document.getElementById('gPage');
+  if (gPage && gPage.innerHTML && DB.govUser) {
+    var sel = document.querySelector('#gNav .nav-i.on');
+    if (sel) { gPage.style.animation = 'none'; gPage.innerHTML = getGovPageContent(sel.dataset.p); }
+  }
+  _remoteSync = false;
+}
+// Helper to get page content without navigation side effects
+function getPageContent(p) {
+  if (p.startsWith('code_')) { var code = DB.legalCodes.find(function(x){return x.id===p.replace('code_','')}); return code ? pCodeView(code) : ''; }
+  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
+  return R[p] ? R[p]() : '';
+}
+function getGovPageContent(p) {
+  var R = {gdash:gDash,gcit:gCitizens,gent:gEnt,gjobs:gJobs,gtax:gTax,gbudget:gBudget,gdecree:gDecree,gcodes:gCodes,gdefcon:gDefcon,gvault:gVault,gvotes:gVotes};
+  return R[p] ? R[p]() : '';
 }
 
 // ============ DATA ============// ============ DATA ============
@@ -380,6 +409,8 @@ const DB = {
   _chatReplyTo: undefined,
   _comptaTab: null,
   _patientView: null,
+  _vaultView: null,
+  _vaultRead: undefined,
 
   // HEALTH RECORDS — per citizen, accessible by EMS
   healthRecords: {
@@ -813,10 +844,10 @@ function buildNav() {
 }
 
 function go(p) {
-  saveDB(); // Auto-persist all data
+  saveDB();
   DB.currentPage = p;
   document.querySelectorAll('.nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
-  const c=document.getElementById('page');c.style.animation='none';c.offsetHeight;c.style.animation='fadeIn .25s ease';
+  const c=document.getElementById('page');
   const T={home:'Mon Espace',salaires:'Mes Salaires',health:'Carnet de Santé',msg:'Messagerie',jobs:'Offres d\'Emploi',vote:'Voter les Lois',wdash:'Mon Poste',wpos:'Caisse Enregistreuse',wpay:'Mon Salaire',wfrais:'Mes Frais Pro',wchat:'Discussion Interne',wstock:'Gestion du Stock',wpatients:'Dossiers Patients',warticles:'Articles de la Caisse',wteam:'Gestion d\'Équipe',whr:'Primes & Sanctions',wcompta:'Comptabilité',wgrades:'Configuration des Grades',wapps:'Candidatures Reçues'};
   // Handle code pages
   if (p.startsWith('code_')) {
@@ -1159,29 +1190,68 @@ function sendReply() {
 
 // ============ OFFRES D'EMPLOI ============
 function pJobs() {
-  let h = `<div style="margin-bottom:1.2rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">💼 Offres d'Emploi</h1><p style="color:var(--t2);font-size:.82rem">${DB.jobs.length} postes ouverts</p></div>`;
-  DB.jobs.forEach(j => {
+  const isPatron = DB.job && DB.job.grades[DB.job.gradeIndex] && DB.job.grades[DB.job.gradeIndex].canHire;
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">💼 Offres d'Emploi</h1><p style="color:var(--t2);font-size:.82rem">${DB.jobs.length} postes ouverts</p></div>
+    ${isPatron?'<button class="btn btn-sm btn-blue" onclick="modalPostJob()">+ Publier une Offre</button>':''}
+  </div>`;
+  if (!DB.jobs.length) h += '<div class="card" style="text-align:center;padding:1.5rem;color:var(--t3)">Aucune offre pour le moment.</div>';
+  DB.jobs.forEach(function(j,i) {
     h += `<div class="card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem">
         <div style="flex:1;min-width:200px">
           <div style="font-weight:600;font-size:.95rem">${j.icon} ${j.company}</div>
           <div style="font-size:.88rem;margin-top:.2rem">${j.role} <span class="badge b-gold">${j.salary}</span></div>
           <p style="font-size:.8rem;color:var(--t2);margin-top:.3rem">${j.desc}</p>
-          <div style="font-size:.73rem;color:var(--t3);margin-top:.3rem">👥 ${j.slots} poste${j.slots>1?'s':''} disponible${j.slots>1?'s':''}</div>
+          <div style="font-size:.73rem;color:var(--t3);margin-top:.3rem">👥 ${j.slots} poste${j.slots>1?'s':''} disponible${j.slots>1?'s':''} — Posté par ${j.postedBy||'—'}</div>
         </div>
-        <button class="btn btn-sm btn-blue" onclick="modalApply(${j.id})">📝 Postuler</button>
+        <div style="display:flex;flex-direction:column;gap:.3rem">
+          <button class="btn btn-sm btn-blue" onclick="modalApply(${j.id})">📝 Postuler</button>
+          ${(isPatron && j.company === DB.job.company) ? `<button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);toast('Offre supprimée');go('jobs')" style="font-size:.7rem">🗑️</button>` : ''}
+        </div>
       </div></div>`;
   });
   return h;
 }
+function modalPostJob() {
+  if (!DB.job) return;
+  const gradeOpts = DB.job.grades.map(function(g){return '<option>' + g.name + ' — ' + getPayLabel(g) + '</option>'}).join('');
+  modal(`<div class="modal-t">📢 Publier une Offre d'Emploi</div>
+    <div style="padding:.4rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">${DB.job.icon} ${DB.job.company}</div>
+    <div class="fg"><label>Poste proposé</label><select id="pjRole">${gradeOpts}</select></div>
+    <div class="fg"><label>Nombre de postes</label><input type="number" id="pjSlots" value="1" min="1"></div>
+    <div class="fg"><label>Description de l'offre</label><textarea id="pjDesc" rows="3" placeholder="Décrivez le poste, les horaires, les avantages..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="publishJob()">Publier</button></div>`);
+}
+function publishJob() {
+  const role = document.getElementById('pjRole').value.split(' — ')[0];
+  const salary = document.getElementById('pjRole').value.split(' — ')[1] || '';
+  DB.jobs.push({
+    id: Date.now(), company: DB.job.company, icon: DB.job.icon,
+    role: role, salary: salary, slots: parseInt(document.getElementById('pjSlots').value) || 1,
+    desc: document.getElementById('pjDesc').value || 'Rejoignez notre équipe !',
+    postedBy: DB.user.name
+  });
+  closeModal(); toast('Offre publiée !'); go('jobs');
+}
 function modalApply(jobId) {
-  const j = DB.jobs.find(x=>x.id===jobId);
+  const j = DB.jobs.find(function(x){return x.id===jobId});
   modal(`<div class="modal-t">📝 Postuler — ${j.role} chez ${j.company}</div>
     <div class="fg"><label>Votre nom</label><input value="${DB.user.name}" readonly style="opacity:.7"></div>
-    <div class="fg"><label>Téléphone</label><input value="${DB.user.phone}" readonly style="opacity:.7"></div>
-    <div class="fg"><label>Pourquoi ce poste ?</label><textarea placeholder="Votre motivation..."></textarea></div>
-    <div class="fg"><label>Expérience</label><textarea placeholder="Décrivez votre parcours..."></textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="closeModal();toast('Candidature envoyée à ${j.company} !')">Envoyer</button></div>`);
+    <div class="fg"><label>Votre motivation</label><textarea id="apMsg" rows="3" placeholder="Pourquoi ce poste ?"></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="submitApplication('${j.company}')">Envoyer</button></div>`);
+}
+function submitApplication(company) {
+  const msg = document.getElementById('apMsg').value || 'Motivé pour rejoindre l\'équipe.';
+  // Add to the enterprise's pending applications
+  const jobData = DB.allJobs[company];
+  if (jobData) {
+    jobData.pendingApps.push({
+      id: DB.user.id, name: DB.user.name, phone: DB.user.phone,
+      message: msg, date: new Date().toLocaleDateString('fr-FR')
+    });
+  }
+  closeModal(); toast('Candidature envoyée à ' + company + ' !'); go('jobs');
 }
 
 // ============ VOTES ============
@@ -2386,6 +2456,7 @@ function buildGovNav() {
    { id:'gdash', ico:'📊', label:'Tableau de Bord' },
    { id:'gcit', ico:'👥', label:'Citoyens ('+DB.citizens.length+')' },
    { id:'gent', ico:'🏢', label:'Entreprises' },
+   { id:'gjobs', ico:'💼', label:'Offres d\'Emploi' },
    { id:'gtax', ico:'💰', label:'Fiscalité' },
    { id:'gbudget', ico:'🏦', label:'Budget de l\'État' },
    { id:'gdecree', ico:'📜', label:'Décrets' },
@@ -2399,12 +2470,12 @@ function buildGovNav() {
   });
 }
 function goGov(p) {
-  saveDB(); // Auto-persist all data
+  saveDB();
   document.querySelectorAll('#gNav .nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
-  const c=document.getElementById('gPage');c.style.animation='none';c.offsetHeight;c.style.animation='fadeIn .25s ease';
-  const T={gdash:'Panneau de Contrôle',gcit:'Registre des Citoyens',gent:'Gestion des Entreprises',gtax:'Configuration Fiscale',gbudget:'Budget de l\'État',gdecree:'Décrets & Annonces',gcodes:'Gestion des Codes & Lois',gdefcon:'Sécurité — DEFCON',gvault:'Coffre-Fort Sécurisé',gvotes:'Lois & Votes Citoyens'};
+  const c=document.getElementById('gPage');
+  const T={gdash:'Panneau de Contrôle',gcit:'Registre des Citoyens',gent:'Gestion des Entreprises',gjobs:'Offres d\'Emploi',gtax:'Configuration Fiscale',gbudget:'Budget de l\'État',gdecree:'Décrets & Annonces',gcodes:'Gestion des Codes & Lois',gdefcon:'Sécurité — DEFCON',gvault:'Coffre-Fort Sécurisé',gvotes:'Lois & Votes Citoyens'};
   document.getElementById('gTopTitle').textContent=T[p]||p;
-  const R={gdash:gDash,gcit:gCitizens,gent:gEnt,gtax:gTax,gbudget:gBudget,gdecree:gDecree,gcodes:gCodes,gdefcon:gDefcon,gvault:gVault,gvotes:gVotes};
+  const R={gdash:gDash,gcit:gCitizens,gent:gEnt,gjobs:gJobs,gtax:gTax,gbudget:gBudget,gdecree:gDecree,gcodes:gCodes,gdefcon:gDefcon,gvault:gVault,gvotes:gVotes};
   c.innerHTML=(R[p]||(()=>''))();
   document.getElementById('gSide').classList.remove('open');
 }
@@ -2458,6 +2529,7 @@ function gCitizens() {
       <td>${c.job ? `<span class="badge b-green">${c.job}</span><div style="font-size:.68rem;color:var(--t3)">${c.role||''}</div>` : '<span class="badge b-orange">Sans emploi</span>'}</td>
       <td><div style="display:flex;gap:.2rem;flex-wrap:wrap">
         <button class="btn btn-sm btn-outline" onclick="modalAssignPatron('${c.id}')" title="Nommer Patron">👔</button>
+        ${c.job ? `<button class="btn btn-sm btn-red" onclick="removeFromJob('${c.id}')" title="Retirer de l'emploi" style="padding:.2rem .4rem">🚫</button>` : ''}
         <button class="btn btn-sm btn-outline" onclick="modalResetPass('${c.id}')" title="Réinitialiser MDP">🔑</button>
       </div></td>
     </tr>`;
@@ -2472,6 +2544,30 @@ function modalAssignPatron(citizenId) {
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">Citoyen: <strong>${c.name}</strong> <span class="mono" style="color:var(--t3)">${c.id}</span></div>
     <div class="fg"><label>Entreprise</label><select id="apEnt">${entOpts}</select></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAssignPatron('${c.id}','${c.name}','${c.phone||''}')">Confirmer</button></div>`);
+}
+function removeFromJob(citizenId) {
+  const c = DB.citizens.find(x=>x.id===citizenId);
+  if (!c || !c.job) return;
+  confirmDel('Retirer ' + c.name + ' de ' + c.job + ' ? ('+c.role+')', function(){
+    // Remove from allJobs employee list
+    const jobData = DB.allJobs[c.job];
+    if (jobData) {
+      const emp = jobData.employees.find(function(e){return e.id===citizenId});
+      if (emp) emp.status = 'inactive';
+    }
+    // If patron, clear enterprise patron
+    if (c.role === 'Patron') {
+      const ent = DB.enterprises.find(function(e){return e.name===c.job});
+      if (ent) { ent.patron = '—'; ent.patronId = ''; }
+    }
+    // Update enterprise employee count
+    const ent2 = DB.enterprises.find(function(e){return e.name===c.job});
+    if (ent2 && DB.allJobs[c.job]) ent2.employees = DB.allJobs[c.job].employees.filter(function(e){return e.status==='active'}).length;
+    // Clear citizen job
+    c.job = null; c.role = null;
+    toast(c.name + ' retiré de son emploi');
+    goGov('gcit');
+  });
 }
 function doAssignPatron(citizenId, citizenName, citizenPhone) {
   const ei = parseInt(document.getElementById('apEnt').value);
@@ -2521,6 +2617,7 @@ function gEnt() {
       <td><span class="badge ${e.status==='active'?'b-green':e.status==='suspended'?'b-orange':'b-red'}">${e.status==='active'?'Active':e.status==='suspended'?'Suspendue':'Fermée'}</span></td>
       <td><div style="display:flex;gap:.2rem;flex-wrap:wrap">
         <button class="btn btn-sm btn-outline" onclick="modalChangePatron(${i})" title="Changer le patron">👔</button>
+        <button class="btn btn-sm btn-outline" style="border-color:rgba(59,130,246,.3);color:var(--blue)" onclick="modalGovPostJob(${i})" title="Publier une offre">📢</button>
         ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
         <button class="btn btn-sm btn-red" onclick="delEnterprise(${i})" title="Supprimer">🗑️</button>
       </div></td></tr>`;
@@ -2594,6 +2691,68 @@ function changePatron(idx) {
     else { jobData.employees.push({id:newCit.id, name:newCit.name, grade:0, phone:newCit.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
   }
   closeModal(); toast('Patron de ' + ent.name + ' → ' + (newCit?newCit.name:'—')); goGov('gent');
+}
+function modalGovPostJob(entIdx) {
+  const ent = DB.enterprises[entIdx];
+  modal(`<div class="modal-t">📢 Publier une Offre — ${ent.icon} ${ent.name}</div>
+    <div class="fg"><label>Poste</label><input id="gjRole" placeholder="Ex: Chauffeur, Médecin..."></div>
+    <div class="fg"><label>Rémunération</label><input id="gjSalary" placeholder="Ex: $1500/sem, Commission 12%..."></div>
+    <div class="fg"><label>Nombre de postes</label><input type="number" id="gjSlots" value="1" min="1"></div>
+    <div class="fg"><label>Description</label><textarea id="gjDesc" rows="3" placeholder="Décrivez le poste..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="govPostJob(${entIdx})">Publier</button></div>`);
+}
+function govPostJob(entIdx) {
+  const ent = DB.enterprises[entIdx];
+  DB.jobs.push({id:Date.now(), company:ent.name, icon:ent.icon, role:document.getElementById('gjRole').value||'Employé', salary:document.getElementById('gjSalary').value||'À définir', slots:parseInt(document.getElementById('gjSlots').value)||1, desc:document.getElementById('gjDesc').value||'Poste ouvert.', postedBy:'Gouvernement'});
+  closeModal(); toast('Offre publiée pour ' + ent.name); goGov('gent');
+}
+
+// ============ GOV: OFFRES D'EMPLOI ============
+function gJobs() {
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">💼 Offres d'Emploi</h1><p style="color:var(--t2);font-size:.82rem">${DB.jobs.length} offre${DB.jobs.length>1?'s':''} publiée${DB.jobs.length>1?'s':''}</p></div>
+    <button class="btn btn-sm btn-blue" onclick="modalGovPostJob()">+ Publier une Offre (État)</button>
+  </div>`;
+
+  if (!DB.jobs.length) h += '<div class="card" style="text-align:center;padding:1.5rem;color:var(--t3)">Aucune offre publiée.</div>';
+  DB.jobs.forEach(function(j,i) {
+    h += `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem">
+        <div style="flex:1;min-width:200px">
+          <div style="font-weight:600;font-size:.95rem">${j.icon} ${j.company}</div>
+          <div style="font-size:.88rem;margin-top:.2rem">${j.role} <span class="badge b-gold">${j.salary}</span></div>
+          <p style="font-size:.8rem;color:var(--t2);margin-top:.3rem">${j.desc}</p>
+          <div style="font-size:.73rem;color:var(--t3);margin-top:.3rem">👥 ${j.slots} poste${j.slots>1?'s':''} — Posté par ${j.postedBy||'—'}</div>
+        </div>
+        <button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);toast('Offre supprimée');goGov('gjobs')" style="padding:.25rem .5rem">🗑️</button>
+      </div></div>`;
+  });
+  return h;
+}
+function modalGovPostJob() {
+  const entOpts = DB.enterprises.filter(function(e){return e.status==='active'}).map(function(e,i){return '<option value="'+i+'">'+e.icon+' '+e.name+'</option>'}).join('');
+  modal(`<div class="modal-t">💼 Publier une Offre d'Emploi</div>
+    <div class="fg"><label>Entreprise</label><select id="gjEnt">${entOpts}<option value="gov">🏛️ État de San Andreas</option></select></div>
+    <div class="fg"><label>Poste proposé</label><input id="gjRole" placeholder="Ex: Secrétaire, Agent..."></div>
+    <div class="fg"><label>Salaire / Rémunération</label><input id="gjSal" placeholder="Ex: $1500/sem"></div>
+    <div class="fg"><label>Nombre de postes</label><input type="number" id="gjSlots" value="1" min="1"></div>
+    <div class="fg"><label>Description</label><textarea id="gjDesc" rows="3" placeholder="Décrivez le poste..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="govPublishJob()">Publier</button></div>`);
+}
+function govPublishJob() {
+  const entIdx = document.getElementById('gjEnt').value;
+  var company, icon;
+  if (entIdx === 'gov') { company = 'État de San Andreas'; icon = '🏛️'; }
+  else { const e = DB.enterprises[parseInt(entIdx)]; company = e.name; icon = e.icon; }
+  DB.jobs.push({
+    id: Date.now(), company: company, icon: icon,
+    role: document.getElementById('gjRole').value || 'Agent',
+    salary: document.getElementById('gjSal').value || 'À définir',
+    slots: parseInt(document.getElementById('gjSlots').value) || 1,
+    desc: document.getElementById('gjDesc').value || 'Poste à pourvoir.',
+    postedBy: DB.govUser ? DB.govUser.name : 'Gouvernement'
+  });
+  closeModal(); toast('Offre publiée !'); goGov('gjobs');
 }
 
 // ============ GOV: FISCALITE ============
@@ -2821,17 +2980,39 @@ function modalEditArticle(codeId, artIdx) {
 function gDefcon() {
   const dc=['','var(--red)','var(--orange)','var(--gold)','var(--blue)','var(--green)'];
   const dl=['','MAXIMUM — Guerre Totale','SÉVÈRE — Menace Imminente','ÉLEVÉ — Alerte','GARDÉ — Surveillance','NORMAL — Paix'];
-  const proto={5:['✅ Activités civiles normales','✅ Patrouilles de routine'],4:['⚠️ Patrouilles renforcées','⚠️ Contrôles ponctuels'],3:['🔶 Points de contrôle','🔶 Couvre-feu 23h-6h optionnel','⚠️ Rassemblements limités'],2:['🔴 Forces spéciales déployées','🔴 Couvre-feu 21h-7h','🔴 Rassemblements interdits'],1:['🚫 LOI MARTIALE','🚫 Circulation interdite','🔴 Armée déployée','🔴 Communications surveillées']};
+  // Editable protocols stored in DB
+  if (!DB.defconProtos) DB.defconProtos = {5:['✅ Activités civiles normales','✅ Patrouilles de routine'],4:['⚠️ Patrouilles renforcées','⚠️ Contrôles ponctuels'],3:['🔶 Points de contrôle','🔶 Couvre-feu 23h-6h optionnel','⚠️ Rassemblements limités'],2:['🔴 Forces spéciales déployées','🔴 Couvre-feu 21h-7h','🔴 Rassemblements interdits'],1:['🚫 LOI MARTIALE','🚫 Circulation interdite','🔴 Armée déployée','🔴 Communications surveillées']};
   let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🚨 Niveau DEFCON</h1></div>`;
   h += `<div class="card" style="text-align:center">
     <div style="font-family:'Rajdhani',sans-serif;font-size:5rem;font-weight:700;color:${dc[DB.defcon]}">${DB.defcon}</div>
     <div style="color:${dc[DB.defcon]};font-size:1.1rem;font-weight:600">${dl[DB.defcon]}</div>
     <div class="defcon-grid">${[5,4,3,2,1].map(n=>`<div class="defcon-btn dc${n} ${DB.defcon===n?'sel':''}" onclick="changeDefcon(${n})">${n}</div>`).join('')}</div></div>`;
-  h += `<div class="card"><div class="card-t">📋 Protocoles — Niveau ${DB.defcon}</div>${(proto[DB.defcon]||[]).map(p=>`<div style="padding:.4rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.4rem;font-size:.84rem">${p}</div>`).join('')}</div>`;
-  h += `<div class="card"><div class="card-t">📜 Historique</div><table><thead><tr><th>Date</th><th>De</th><th>À</th><th>Motif</th><th>Auteur</th></tr></thead><tbody>`;
-  DB.defconLog.forEach(l => h += `<tr><td style="font-size:.8rem">${l.date}</td><td><span class="badge ${l.from>=4?'b-green':l.from>=3?'b-gold':'b-red'}">${l.from}</span></td><td><span class="badge ${l.to>=4?'b-green':l.to>=3?'b-gold':'b-red'}">${l.to}</span></td><td style="font-size:.82rem">${l.reason}</td><td style="font-size:.8rem">${l.author}</td></tr>`);
+
+  // Current protocols with edit
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">📋 Protocoles — Niveau ${DB.defcon} <button class="btn btn-sm btn-outline" onclick="modalEditProtos(${DB.defcon})">✏️ Modifier</button></div>`;
+  (DB.defconProtos[DB.defcon]||[]).forEach(p => h += `<div style="padding:.4rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.4rem;font-size:.84rem">${p}</div>`);
+  h += '</div>';
+
+  // All levels overview
+  h += '<div class="card"><div class="card-t">📊 Vue des Protocoles par Niveau</div>';
+  [5,4,3,2,1].forEach(n => {
+    h += `<div style="margin-bottom:.6rem"><div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.3rem"><span class="badge ${n>=4?'b-green':n>=3?'b-gold':'b-red'}">Niveau ${n}</span><span style="font-size:.78rem;color:var(--t2)">${dl[n]}</span><button class="btn btn-sm btn-outline" onclick="modalEditProtos(${n})" style="padding:.1rem .3rem;font-size:.65rem">✏️</button></div>`;
+    (DB.defconProtos[n]||[]).forEach(p => h += `<div style="padding:.2rem .5rem;font-size:.78rem;color:var(--t2)">${p}</div>`);
+    h += '</div>';
+  });
+  h += '</div>';
+
+  // History — max 10
+  h += `<div class="card"><div class="card-t">📜 Historique (10 derniers)</div><table><thead><tr><th>Date</th><th>De</th><th>À</th><th>Motif</th><th>Auteur</th></tr></thead><tbody>`;
+  DB.defconLog.slice(0, 10).forEach(l => h += `<tr><td style="font-size:.8rem">${l.date}</td><td><span class="badge ${l.from>=4?'b-green':l.from>=3?'b-gold':'b-red'}">${l.from}</span></td><td><span class="badge ${l.to>=4?'b-green':l.to>=3?'b-gold':'b-red'}">${l.to}</span></td><td style="font-size:.82rem">${l.reason}</td><td style="font-size:.8rem">${l.author}</td></tr>`);
   h += '</tbody></table></div>';
   return h;
+}
+function modalEditProtos(level) {
+  const protos = DB.defconProtos[level] || [];
+  modal(`<div class="modal-t">✏️ Protocoles — Niveau ${level}</div>
+    <div class="fg"><label>Protocoles (un par ligne)</label><textarea id="protoEdit" rows="8" style="font-size:.85rem">${protos.join('\n')}</textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="DB.defconProtos[${level}]=document.getElementById('protoEdit').value.split('\\n').filter(function(l){return l.trim()});closeModal();toast('Protocoles niveau ${level} mis à jour');goGov('gdefcon')">Sauvegarder</button></div>`);
 }
 function changeDefcon(n) {
   if (n === DB.defcon) return;
@@ -2844,6 +3025,7 @@ function doChangeDefcon(n) {
   const reason = document.getElementById('dcReason').value.trim();
   if (!reason) { err('Motif obligatoire.'); return; }
   DB.defconLog.unshift({ date: new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), from: DB.defcon, to: n, reason: reason, author: DB.govUser.name });
+  if (DB.defconLog.length > 10) DB.defconLog.length = 10; // Max 10
   DB.defcon = n;
   closeModal();
   toast('DEFCON passé au niveau ' + n);
@@ -2852,27 +3034,118 @@ function doChangeDefcon(n) {
 
 // ============ GOV: COFFRE-FORT ============
 function gVault() {
-  let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🔒 Coffre-Fort Sécurisé</h1><p style="color:var(--t2);font-size:.82rem">${DB.vault.length} documents classifiés</p></div>`;
-  h += `<div class="gov-warn">⚠️ Accès restreint — Tout téléchargement est enregistré et audité</div>`;
-  h += `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-blue" onclick="modalAddDoc()">+ Ajouter un Document</button></div>`;
-  DB.vault.forEach((d,i) => {
-    const ico = d.type==='pdf'?'📄':d.type==='xlsx'?'📊':'📁';
+  if (DB._vaultView) return gVaultDetail(DB._vaultView);
+  // Upgrade old vault format
+  DB.vault.forEach(function(d) { if (!d.notes) d.notes = ''; if (!d.pages) d.pages = []; });
+
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🔒 Coffre-Fort Sécurisé</h1><p style="color:var(--t2);font-size:.82rem">${DB.vault.length} dossiers classifiés</p></div>
+    <button class="btn btn-sm btn-blue" onclick="modalAddDossier()">+ Nouveau Dossier</button>
+  </div>`;
+  h += `<div class="gov-warn">⚠️ Accès restreint — Tout accès est enregistré et audité</div>`;
+
+  DB.vault.forEach(function(d,i) {
     const classColor = d.classification==='Secret Défense'?'b-red':d.classification==='Confidentiel'?'b-orange':'b-blue';
-    h += `<div class="vault-item">
-      <div class="vault-icon">${ico}</div>
-      <div class="vault-info"><div class="vault-name">${d.name}</div><div class="vault-meta">${d.type.toUpperCase()} — ${d.size} — Ajouté le ${d.date}</div></div>
-      <span class="badge ${classColor}">${d.classification}</span>
-      <button class="btn btn-sm btn-outline" onclick="toast('Accès enregistré — ${d.name}')" title="Consulter">👁️</button>
-      <button class="btn btn-sm btn-red" onclick="DB.vault.splice(${i},1);toast('Document supprimé');goGov('gvault')" style="padding:.25rem .4rem" title="Supprimer">🗑️</button>
+    const pageCount = d.pages ? d.pages.length : 0;
+    h += `<div class="card" style="cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border)'" onclick="DB._vaultView=${i};goGov('gvault')">
+      <div style="display:flex;align-items:center;gap:.8rem">
+        <div style="font-size:2rem">📂</div>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:.95rem">${d.name}</div>
+          <div style="font-size:.78rem;color:var(--t2);margin-top:.1rem">${d.notes ? d.notes.substring(0,80) + (d.notes.length>80?'...':'') : 'Aucune description'}</div>
+          <div style="font-size:.7rem;color:var(--t3);margin-top:.2rem">Créé le ${d.date} — ${pageCount} page${pageCount>1?'s':''}</div>
+        </div>
+        <span class="badge ${classColor}">${d.classification}</span>
+        <button class="btn btn-sm btn-red" onclick="event.stopPropagation();DB.vault.splice(${i},1);toast('Dossier supprimé');goGov('gvault')" style="padding:.25rem .4rem">🗑️</button>
+      </div>
     </div>`;
   });
+  if (!DB.vault.length) h += '<div class="card" style="text-align:center;color:var(--t3);padding:2rem">Aucun dossier dans le coffre-fort.</div>';
   return h;
 }
-function modalAddDoc() {
-  modal(`<div class="modal-t">📎 Ajouter un Document</div>
-    <div class="fg"><label>Nom du document</label><input id="vdName" placeholder="Ex: Budget prévisionnel"></div>
-    <div class="row"><div class="fg"><label>Type</label><select id="vdType"><option value="pdf">PDF</option><option value="xlsx">Excel</option><option value="doc">Document</option><option value="img">Image</option></select></div><div class="fg"><label>Classification</label><select id="vdClass"><option>Restreint</option><option>Confidentiel</option><option>Secret Défense</option></select></div></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('vdName').value||'Document';DB.vault.push({id:DB.vault.length+1,name:n,type:document.getElementById('vdType').value,classification:document.getElementById('vdClass').value,date:new Date().toLocaleDateString('fr-FR'),size:'—'});closeModal();toast(n+' ajouté au coffre');goGov('gvault')">Ajouter</button></div>`);
+
+function gVaultDetail(idx) {
+  const d = DB.vault[idx];
+  if (!d) { DB._vaultView = null; return gVault(); }
+  if (!d.pages) d.pages = [];
+  const classColor = d.classification==='Secret Défense'?'b-red':d.classification==='Confidentiel'?'b-orange':'b-blue';
+
+  // Read mode?
+  if (DB._vaultRead !== undefined) {
+    const page = d.pages[DB._vaultRead];
+    if (!page) { DB._vaultRead = undefined; return gVaultDetail(idx); }
+    let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._vaultRead=undefined;goGov('gvault')">← Retour au dossier</button></div>`;
+    h += `<div class="card" style="min-height:300px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;padding-bottom:.8rem;border-bottom:1px solid var(--border)">
+        <div><div style="font-weight:700;font-size:1.1rem">${page.title}</div><div style="font-size:.75rem;color:var(--t3)">Écrit par ${page.author} — ${page.date}</div></div>
+        <span class="badge ${classColor}">${d.classification}</span>
+      </div>
+      <div style="font-size:.88rem;line-height:1.8;white-space:pre-wrap;color:var(--t1)">${page.content}</div>
+    </div>`;
+    return h;
+  }
+
+  let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._vaultView=null;goGov('gvault')">← Retour</button></div>`;
+  h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem">
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.4rem;font-weight:700">📂 ${d.name}</h1>
+    <p style="color:var(--t2);font-size:.82rem"><span class="badge ${classColor}">${d.classification}</span> — Créé le ${d.date}</p></div>
+    <button class="btn btn-sm btn-outline" onclick="modalEditDossier(${idx})">✏️ Modifier</button>
+  </div>`;
+
+  // Description
+  if (d.notes) h += `<div class="card"><div class="card-t">📝 Description</div><p style="font-size:.88rem;line-height:1.6;white-space:pre-wrap">${d.notes}</p></div>`;
+
+  // Pages
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">📄 Pages du Dossier (${d.pages.length}) <button class="btn btn-sm btn-green" onclick="modalAddPage(${idx})">+ Ajouter une Page</button></div>`;
+  if (!d.pages.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucune page. Ajoutez du contenu.</p>';
+  d.pages.forEach(function(p, pi) {
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:7px;margin-bottom:.3rem">
+      <div style="cursor:pointer;flex:1" onclick="DB._vaultRead=${pi};goGov('gvault')">
+        <div style="font-weight:600;font-size:.88rem">📄 ${p.title}</div>
+        <div style="font-size:.72rem;color:var(--t3)">${p.author} — ${p.date} — ${p.content.length} car.</div>
+      </div>
+      <div style="display:flex;gap:.2rem">
+        <button class="btn btn-sm btn-blue" onclick="DB._vaultRead=${pi};goGov('gvault')" title="Lire">👁️</button>
+        <button class="btn btn-sm btn-outline" onclick="modalEditPage(${idx},${pi})" title="Modifier">✏️</button>
+        <button class="btn btn-sm btn-red" onclick="DB.vault[${idx}].pages.splice(${pi},1);toast('Page supprimée');goGov('gvault')" style="padding:.2rem .4rem">✕</button>
+      </div>
+    </div>`;
+  });
+  h += '</div>';
+  return h;
+}
+
+function modalAddDossier() {
+  modal(`<div class="modal-t">📂 Nouveau Dossier Classifié</div>
+    <div class="fg"><label>Nom du dossier</label><input id="vdName" placeholder="Ex: Opération Tempête"></div>
+    <div class="fg"><label>Description / Notes</label><textarea id="vdNotes" rows="3" placeholder="Description du contenu..."></textarea></div>
+    <div class="fg"><label>Classification</label><select id="vdClass"><option>Restreint</option><option>Confidentiel</option><option>Secret Défense</option></select></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('vdName').value||'Nouveau Dossier';DB.vault.push({name:n,notes:document.getElementById('vdNotes').value||'',classification:document.getElementById('vdClass').value,date:new Date().toLocaleDateString('fr-FR'),pages:[]});closeModal();toast(n+' créé');goGov('gvault')">Créer</button></div>`);
+}
+
+function modalEditDossier(idx) {
+  const d = DB.vault[idx];
+  modal(`<div class="modal-t">✏️ Modifier — ${d.name}</div>
+    <div class="fg"><label>Nom</label><input id="edName" value="${d.name}"></div>
+    <div class="fg"><label>Description</label><textarea id="edNotes" rows="3">${d.notes||''}</textarea></div>
+    <div class="fg"><label>Classification</label><select id="edClass"><option ${d.classification==='Restreint'?'selected':''}>Restreint</option><option ${d.classification==='Confidentiel'?'selected':''}>Confidentiel</option><option ${d.classification==='Secret Défense'?'selected':''}>Secret Défense</option></select></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var dd=DB.vault[${idx}];dd.name=document.getElementById('edName').value;dd.notes=document.getElementById('edNotes').value;dd.classification=document.getElementById('edClass').value;closeModal();toast('Dossier mis à jour');goGov('gvault')">Sauvegarder</button></div>`);
+}
+
+function modalAddPage(dossierIdx) {
+  modal(`<div class="modal-t">📄 Nouvelle Page</div>
+    <div class="fg"><label>Titre</label><input id="vpTitle" placeholder="Ex: Rapport d'enquête #1"></div>
+    <div class="fg"><label>Auteur</label><input id="vpAuthor" value="${DB.govUser?DB.govUser.name:''}"></div>
+    <div class="fg"><label>Contenu</label><textarea id="vpContent" rows="10" placeholder="Rédigez le contenu du document..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.vault[${dossierIdx}].pages.push({title:document.getElementById('vpTitle').value||'Page',author:document.getElementById('vpAuthor').value||'—',content:document.getElementById('vpContent').value||'',date:new Date().toLocaleDateString('fr-FR')});closeModal();toast('Page ajoutée');goGov('gvault')">Ajouter</button></div>`);
+}
+
+function modalEditPage(dossierIdx, pageIdx) {
+  const p = DB.vault[dossierIdx].pages[pageIdx];
+  modal(`<div class="modal-t">✏️ Modifier — ${p.title}</div>
+    <div class="fg"><label>Titre</label><input id="epTitle" value="${p.title}"></div>
+    <div class="fg"><label>Contenu</label><textarea id="epContent" rows="10">${p.content}</textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var pp=DB.vault[${dossierIdx}].pages[${pageIdx}];pp.title=document.getElementById('epTitle').value;pp.content=document.getElementById('epContent').value;closeModal();toast('Page mise à jour');goGov('gvault')">Sauvegarder</button></div>`);
 }
 
 // ============ GOV: VOTES / LOIS ============
