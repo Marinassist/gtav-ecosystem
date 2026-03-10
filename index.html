@@ -2242,8 +2242,14 @@ function doGovLogin() {
   const name = document.getElementById('gName').value.trim();
   const code = document.getElementById('gCode').value.trim();
   if (!id || !code) { err('Identifiant et code requis.'); return; }
+  // Bootstrap: if no accounts exist, first login creates the account
+  if (!DB.govAccounts || !DB.govAccounts.length) {
+    if (!name) { err('Nom requis pour créer le premier compte.'); return; }
+    DB.govAccounts = [{id: id, name: name, code: code}];
+    saveDB();
+    toast('Compte gouvernement créé : ' + id);
+  }
   // Check against stored gov accounts
-  if (!DB.govAccounts || !DB.govAccounts.length) { err('Aucun compte gouvernement configuré.'); return; }
   const account = DB.govAccounts.find(function(a) { return a.id === id && a.code === code; });
   if (!account) { err('Code d\'accès incorrect.'); return; }
   DB.govUser = { id: account.id, name: name || account.name };
