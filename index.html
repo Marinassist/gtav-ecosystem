@@ -448,172 +448,96 @@ const DB = {
   ],
 };
 
-// Demo: simulate being employed
-function initDemoJob() {
+// ==================== SHARED ENTERPRISE DATA ====================
+function initAllJobs() {
+  [['SA-2010','Dr. Kim','555-0610'],['SA-2011','Dr. Martinez','555-0620'],['SA-2012','Sarah Mitchell','555-0630'],['SA-2013','Jake Williams','555-0640'],['SA-2014','Emma Thompson','555-0650']].forEach(([id,name,phone]) => {
+    if (!DB.citizens.find(c=>c.id===id)) DB.citizens.push({id,name,phone,pass:'pass',registered:'01/01/2025',job:'EMS Los Santos',role:'Employé'});
+  });
+  DB.allJobs = {
+    'Downtown Cab Co.': {
+      company:'Downtown Cab Co.', icon:'🚕',
+      grades:[
+        {name:'Patron',payType:'both',fixe:3000,commission:20,prime:500,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
+        {name:'Gérant',payType:'both',fixe:2000,commission:18,prime:300,canManage:true,canHire:true,canFire:false,canEditGrades:false,canStock:true,canArticles:true,canPOS:true,canPatients:false},
+        {name:'Chauffeur Senior',payType:'commission',fixe:0,commission:15,prime:200,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:false},
+        {name:'Chauffeur',payType:'commission',fixe:0,commission:12,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
+        {name:'Apprenti',payType:'fixe',fixe:800,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:false,canPatients:false},
+      ],
+      employees:[
+        {id:'SA-1001',name:'Marcus Holloway',grade:0,phone:'555-0142',hired:'12/01/25',status:'active'},
+        {id:'SA-1002',name:'Lamar Davis',grade:2,phone:'555-0387',hired:'03/06/25',status:'active'},
+        {id:'SA-1003',name:'Amanda De Santa',grade:3,phone:'555-0219',hired:'15/09/25',status:'active'},
+        {id:'SA-1004',name:'Tracey De Santa',grade:3,phone:'555-0633',hired:'20/11/25',status:'active'},
+        {id:'SA-1005',name:'Jimmy De Santa',grade:4,phone:'555-0501',hired:'01/02/26',status:'active'},
+      ],
+      pos:[{name:'Course Courte',price:150,emoji:'🚖'},{name:'Course Longue',price:350,emoji:'🛣️'},{name:'Aéroport',price:500,emoji:'✈️'},{name:'VIP',price:800,emoji:'🌟'},{name:'Attente /min',price:20,emoji:'⏱️'},{name:'Pourboire',price:50,emoji:'💰'}],
+      invoices:[{id:1,employee:'SA-1003',employeeName:'Amanda De Santa',items:['Course Longue','Pourboire'],total:400,tva:20,date:'10/03/2026',time:'14:32'},{id:2,employee:'SA-1002',employeeName:'Lamar Davis',items:['VIP'],total:800,tva:40,date:'10/03/2026',time:'13:15'},{id:3,employee:'SA-1001',employeeName:'Marcus Holloway',items:['VIP','VIP'],total:1600,tva:80,date:'08/03/2026',time:'18:40'}],
+      weeklyHistory:[{week:'Sem. 10 (03-09 mars)',data:{'SA-1001':{invoiced:4200,count:8},'SA-1002':{invoiced:3100,count:12},'SA-1003':{invoiced:2200,count:9},'SA-1004':{invoiced:1800,count:7},'SA-1005':{invoiced:400,count:3}}},{week:'Sem. 9 (24 fév-02 mars)',data:{'SA-1001':{invoiced:3800,count:7},'SA-1002':{invoiced:2900,count:10},'SA-1003':{invoiced:1950,count:8},'SA-1004':{invoiced:1600,count:6},'SA-1005':{invoiced:350,count:2}}}],
+      pendingApps:[{id:'SA-3001',name:'Tommy Vercetti',phone:'555-0777',message:'5 ans de conduite.',date:'09/03/2026'}],
+      employeeExpenses:[{id:1,empId:'SA-1002',empName:'Lamar Davis',type:'Essence',amount:85,desc:'Plein véhicule #12',date:'10/03/2026',status:'approved'},{id:2,empId:'SA-1003',empName:'Amanda De Santa',type:'Essence',amount:72,desc:'Plein véhicule #8',date:'09/03/2026',status:'pending'}],
+      companyExpenses:[{id:1,type:'Loyer',amount:5000,desc:'Local Davis Avenue',date:'01/03/2026',recurring:true},{id:2,type:'Assurance flotte',amount:3200,desc:'5 véhicules assurés',date:'01/03/2026',recurring:true},{id:3,type:'Réparation',amount:1800,desc:'Véhicule #12',date:'07/03/2026',recurring:false}],
+      taxDeclarations:[{id:1,period:'Q4 2025',ca:98000,expenses:42000,taxDue:6800,date:'15/01/2026',status:'paid'}],
+      stock:[{id:1,name:'Essence Premium',qty:340,unit:'L',min:100,cat:'Carburant',emoji:'⛽',notes:'Shell Davis'},{id:2,name:'Huile moteur',qty:45,unit:'L',min:20,cat:'Mécanique',emoji:'🛢️',notes:'Castrol 5W-40'},{id:3,name:'Pneus',qty:8,unit:'pcs',min:10,cat:'Mécanique',emoji:'🛞',notes:'Stock critique'},{id:4,name:'Kit secours',qty:12,unit:'pcs',min:5,cat:'Sécurité',emoji:'🩹',notes:''},{id:5,name:'GPS',qty:4,unit:'pcs',min:3,cat:'Équipement',emoji:'📡',notes:'Garmin Drive 52'}],
+      internalMessages:[{id:1,from:'SA-1001',fromName:'Marcus Holloway',to:'all',subject:'Réunion lundi 8h',body:'Réunion obligatoire lundi à 8h.',date:'10/03/2026',time:'09:15'},{id:2,from:'SA-1002',fromName:'Lamar Davis',to:'SA-1001',toName:'Marcus Holloway',subject:'Véhicule #12 en panne',body:'Boss, le #12 a un souci moteur.',date:'09/03/2026',time:'16:45'}],
+      hrRecords:[{id:1,empId:'SA-1002',empName:'Lamar Davis',type:'prime',amount:300,reason:'Meilleur chauffeur du mois',date:'01/03/2026',by:'Marcus Holloway'},{id:2,empId:'SA-1005',empName:'Jimmy De Santa',type:'blame',amount:0,reason:'Retard répété',date:'07/03/2026',by:'Marcus Holloway'}],
+    },
+    'EMS Los Santos': {
+      company:'EMS Los Santos', icon:'🏥',
+      grades:[
+        {name:'Directeur Médical',payType:'both',fixe:4000,commission:10,prime:800,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:true},
+        {name:'Chef de Service',payType:'both',fixe:2800,commission:8,prime:400,canManage:true,canHire:true,canFire:false,canEditGrades:false,canStock:true,canArticles:true,canPOS:true,canPatients:true},
+        {name:'Médecin',payType:'both',fixe:2200,commission:5,prime:200,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:true},
+        {name:'Ambulancier',payType:'fixe',fixe:1800,commission:0,prime:100,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:true},
+        {name:'Stagiaire',payType:'fixe',fixe:900,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:false,canPatients:false},
+      ],
+      employees:[
+        {id:'SA-2001',name:'Dr. Friedlander',grade:0,phone:'555-0600',hired:'01/06/24',status:'active'},
+        {id:'SA-2010',name:'Dr. Kim',grade:1,phone:'555-0610',hired:'15/08/24',status:'active'},
+        {id:'SA-2011',name:'Dr. Martinez',grade:2,phone:'555-0620',hired:'10/01/25',status:'active'},
+        {id:'SA-2012',name:'Sarah Mitchell',grade:3,phone:'555-0630',hired:'20/03/25',status:'active'},
+        {id:'SA-2013',name:'Jake Williams',grade:3,phone:'555-0640',hired:'05/07/25',status:'active'},
+        {id:'SA-2014',name:'Emma Thompson',grade:4,phone:'555-0650',hired:'01/02/26',status:'active'},
+      ],
+      pos:[{name:'Consultation',price:200,emoji:'🩺'},{name:'Soins légers',price:350,emoji:'🩹'},{name:'Soins lourds',price:800,emoji:'💉'},{name:'Opération mineure',price:1500,emoji:'🏥'},{name:'Opération majeure',price:5000,emoji:'⚕️'},{name:'Transport ambulance',price:400,emoji:'🚑'},{name:'Médicaments',price:120,emoji:'💊'},{name:'Analyse sanguine',price:250,emoji:'🧪'},{name:'Radiographie',price:350,emoji:'📷'},{name:'IRM / Scanner',price:1200,emoji:'🧠'},{name:'Plâtre / Attelle',price:300,emoji:'🦴'},{name:'Suture',price:200,emoji:'🪡'}],
+      invoices:[{id:1,employee:'SA-2011',employeeName:'Dr. Martinez',items:['Consultation','Médicaments'],total:320,tva:16,date:'10/03/2026',time:'10:15'},{id:2,employee:'SA-2012',employeeName:'Sarah Mitchell',items:['Transport ambulance','Soins légers'],total:750,tva:38,date:'10/03/2026',time:'08:40'},{id:3,employee:'SA-2001',employeeName:'Dr. Friedlander',items:['Opération majeure'],total:5000,tva:250,date:'08/03/2026',time:'09:00'}],
+      weeklyHistory:[{week:'Sem. 10 (03-09 mars)',data:{'SA-2001':{invoiced:12500,count:6},'SA-2010':{invoiced:8200,count:12},'SA-2011':{invoiced:6800,count:15},'SA-2012':{invoiced:4200,count:10},'SA-2013':{invoiced:3800,count:9},'SA-2014':{invoiced:800,count:3}}},{week:'Sem. 9 (24 fév-02 mars)',data:{'SA-2001':{invoiced:10800,count:5},'SA-2010':{invoiced:7500,count:10},'SA-2011':{invoiced:5900,count:12},'SA-2012':{invoiced:3600,count:8},'SA-2013':{invoiced:3200,count:7},'SA-2014':{invoiced:600,count:2}}}],
+      pendingApps:[{id:'SA-3003',name:'Claude Speed',phone:'555-0999',message:'Formation secourisme.',date:'08/03/2026'},{id:'SA-3004',name:'Toni Cipriani',phone:'555-0444',message:'Ex-pompier.',date:'07/03/2026'}],
+      employeeExpenses:[{id:1,empId:'SA-2012',empName:'Sarah Mitchell',type:'Essence',amount:95,desc:'Plein ambulance #3',date:'10/03/2026',status:'approved'},{id:2,empId:'SA-2011',empName:'Dr. Martinez',type:'Équipement',amount:280,desc:'Stéthoscope Littmann',date:'08/03/2026',status:'pending'}],
+      companyExpenses:[{id:1,type:'Loyer',amount:8000,desc:'Clinique Pillbox Hill',date:'01/03/2026',recurring:true},{id:2,type:'Assurance',amount:5500,desc:'RC Pro + Ambulances',date:'01/03/2026',recurring:true},{id:3,type:'Fournisseur médical',amount:4200,desc:'Commande MedSupply',date:'02/03/2026',recurring:true}],
+      taxDeclarations:[{id:1,period:'Q4 2025',ca:156000,expenses:98000,taxDue:8600,date:'20/01/2026',status:'paid'}],
+      stock:[{id:1,name:'Bandages stériles',qty:200,unit:'pcs',min:50,cat:'Soins',emoji:'🩹',notes:''},{id:2,name:'Morphine (doses)',qty:15,unit:'doses',min:20,cat:'Médicaments',emoji:'💉',notes:'⚠️ Stockage réfrigéré'},{id:3,name:'Poches de sang O-',qty:8,unit:'pcs',min:15,cat:'Urgence',emoji:'🩸',notes:'Péremption 42 jours'},{id:4,name:'Seringues',qty:150,unit:'pcs',min:50,cat:'Soins',emoji:'💉',notes:''},{id:5,name:'Attelles',qty:25,unit:'pcs',min:10,cat:'Immobilisation',emoji:'🦴',notes:'S/M/L'},{id:6,name:'Défibrillateur (batt.)',qty:6,unit:'pcs',min:4,cat:'Équipement',emoji:'⚡',notes:'Vérifier charge'},{id:7,name:'Gants stériles',qty:40,unit:'boîtes',min:15,cat:'Hygiène',emoji:'🧤',notes:'Latex free'},{id:8,name:'Adrénaline',qty:10,unit:'doses',min:8,cat:'Médicaments',emoji:'💊',notes:'⚠️ Urgence uniquement'},{id:9,name:'Masques FFP2',qty:300,unit:'pcs',min:100,cat:'Hygiène',emoji:'😷',notes:''}],
+      internalMessages:[{id:1,from:'SA-2001',fromName:'Dr. Friedlander',to:'all',subject:'Protocole COVID mis à jour',body:'Masque FFP2 obligatoire pour interventions respiratoires.',date:'10/03/2026',time:'08:00'},{id:2,from:'SA-2010',fromName:'Dr. Kim',to:'all',subject:'Planning gardes — Semaine 11',body:'Lundi: Martinez + Mitchell\nMardi: Williams + Thompson\nMerci de confirmer.',date:'09/03/2026',time:'17:00'}],
+      hrRecords:[{id:1,empId:'SA-2011',empName:'Dr. Martinez',type:'prime',amount:500,reason:'15 opérations réussies',date:'01/03/2026',by:'Dr. Friedlander'},{id:2,empId:'SA-2014',empName:'Emma Thompson',type:'warning',amount:0,reason:'Oubli rapport intervention',date:'08/03/2026',by:'Dr. Kim'}],
+    },
+  };
+}
+
+// Dynamic job loader — looks up citizen's job and finds their enterprise data
+function loadJob() {
   const uid = DB.user.id;
-  // Cab Co employees
-  if (['SA-1001','SA-1002','SA-1003','SA-1004','SA-1005'].includes(uid)) {
-    const gradeMap = {'SA-1001':0,'SA-1002':2,'SA-1003':3,'SA-1004':3,'SA-1005':4};
-    DB.job = {
-      company:'Downtown Cab Co.', icon:'🚕', role:uid==='SA-1001'?'Patron':'Chauffeur',
-      gradeIndex: gradeMap[uid],
-      grades: [
-        { name:'Patron', payType:'both', fixe:3000, commission:20, prime:500, canManage:true, canHire:true, canFire:true, canEditGrades:true, canStock:true, canArticles:true, canPOS:true },
-        { name:'Gérant', payType:'both', fixe:2000, commission:18, prime:300, canManage:true, canHire:true, canFire:false, canEditGrades:false, canStock:true, canArticles:true, canPOS:true },
-        { name:'Chauffeur Senior', payType:'commission', fixe:0, commission:15, prime:200, canManage:false, canHire:false, canFire:false, canEditGrades:false, canStock:true, canArticles:false, canPOS:false },
-        { name:'Chauffeur', payType:'commission', fixe:0, commission:12, prime:0, canManage:false, canHire:false, canFire:false, canEditGrades:false, canStock:false, canArticles:false, canPOS:false },
-        { name:'Apprenti', payType:'fixe', fixe:800, commission:0, prime:0, canManage:false, canHire:false, canFire:false, canEditGrades:false, canStock:false, canArticles:false, canPOS:false },
-      ],
-      employees: [
-        { id:'SA-1001', name:'Marcus Holloway', grade:0, phone:'555-0142', hired:'12/01/25', status:'active' },
-        { id:'SA-1002', name:'Lamar Davis', grade:2, phone:'555-0387', hired:'03/06/25', status:'active' },
-        { id:'SA-1003', name:'Amanda De Santa', grade:3, phone:'555-0219', hired:'15/09/25', status:'active' },
-        { id:'SA-1004', name:'Tracey De Santa', grade:3, phone:'555-0633', hired:'20/11/25', status:'active' },
-        { id:'SA-1005', name:'Jimmy De Santa', grade:4, phone:'555-0501', hired:'01/02/26', status:'active' },
-      ],
-      pos: [
-        {name:'Course Courte',price:150,emoji:'🚖'},{name:'Course Longue',price:350,emoji:'🛣️'},
-        {name:'Aéroport',price:500,emoji:'✈️'},{name:'VIP',price:800,emoji:'🌟'},
-        {name:'Attente /min',price:20,emoji:'⏱️'},{name:'Pourboire',price:50,emoji:'💰'},
-      ],
-      invoices: [
-        { id:1, employee:'SA-1003', employeeName:'Amanda De Santa', items:['Course Longue','Pourboire'], total:400, tva:20, date:'10/03/2026', time:'14:32' },
-        { id:2, employee:'SA-1002', employeeName:'Lamar Davis', items:['VIP'], total:800, tva:40, date:'10/03/2026', time:'13:15' },
-        { id:3, employee:'SA-1001', employeeName:'Marcus Holloway', items:['VIP','VIP'], total:1600, tva:80, date:'08/03/2026', time:'18:40' },
-      ],
-      weeklyHistory: [
-        { week:'Sem. 10 (03-09 mars)', data:{'SA-1001':{invoiced:4200,count:8},'SA-1002':{invoiced:3100,count:12},'SA-1003':{invoiced:2200,count:9},'SA-1004':{invoiced:1800,count:7},'SA-1005':{invoiced:400,count:3}}},
-        { week:'Sem. 9 (24 fév-02 mars)', data:{'SA-1001':{invoiced:3800,count:7},'SA-1002':{invoiced:2900,count:10},'SA-1003':{invoiced:1950,count:8},'SA-1004':{invoiced:1600,count:6},'SA-1005':{invoiced:350,count:2}}},
-      ],
-      pendingApps: [
-        { id:'SA-3001', name:'Tommy Vercetti', phone:'555-0777', message:'5 ans de conduite. Permis propre.', date:'09/03/2026' },
-      ],
-      employeeExpenses: [
-        { id:1, empId:'SA-1002', empName:'Lamar Davis', type:'Essence', amount:85, desc:'Plein véhicule #12', date:'10/03/2026', status:'approved' },
-        { id:2, empId:'SA-1003', empName:'Amanda De Santa', type:'Essence', amount:72, desc:'Plein véhicule #8', date:'09/03/2026', status:'pending' },
-      ],
-      companyExpenses: [
-        { id:1, type:'Loyer', amount:5000, desc:'Local Davis Avenue', date:'01/03/2026', recurring:true },
-        { id:2, type:'Assurance flotte', amount:3200, desc:'5 véhicules assurés', date:'01/03/2026', recurring:true },
-        { id:3, type:'Réparation', amount:1800, desc:'Véhicule #12 — moteur', date:'07/03/2026', recurring:false },
-      ],
-      taxDeclarations: [{ id:1, period:'Q4 2025', ca:98000, expenses:42000, taxDue:6800, date:'15/01/2026', status:'paid' }],
-      stock: [
-        { id:1, name:'Essence Premium', qty:340, unit:'L', min:100, cat:'Carburant', emoji:'⛽', notes:'Fournisseur: Shell Davis — Livraison lundi' },
-        { id:2, name:'Huile moteur', qty:45, unit:'L', min:20, cat:'Mécanique', emoji:'🛢️', notes:'Castrol 5W-40 — Commander si < 20L' },
-        { id:3, name:'Pneus de rechange', qty:8, unit:'pcs', min:10, cat:'Mécanique', emoji:'🛞', notes:'Michelin 205/55 R16 — Stock critique !' },
-        { id:4, name:'Kit premier secours', qty:12, unit:'pcs', min:5, cat:'Sécurité', emoji:'🩹', notes:'' },
-        { id:5, name:'GPS portable', qty:4, unit:'pcs', min:3, cat:'Équipement', emoji:'📡', notes:'Modèle Garmin Drive 52' },
-      ],
-      internalMessages: [
-        { id:1, from:'SA-1001', fromName:'Marcus Holloway', to:'all', subject:'Réunion lundi 8h', body:'Réunion obligatoire lundi à 8h au dépôt.', date:'10/03/2026', time:'09:15' },
-        { id:2, from:'SA-1002', fromName:'Lamar Davis', to:'SA-1001', toName:'Marcus Holloway', subject:'Véhicule #12 en panne', body:'Boss, le #12 a un souci moteur. 2 courses annulées.', date:'09/03/2026', time:'16:45' },
-      ],
-      // HR RECORDS — primes & sanctions
-      hrRecords: [
-        { id:1, empId:'SA-1002', empName:'Lamar Davis', type:'prime', amount:300, reason:'Meilleur chauffeur du mois — février', date:'01/03/2026', by:'Marcus Holloway' },
-        { id:2, empId:'SA-1003', empName:'Amanda De Santa', type:'prime', amount:150, reason:'Satisfaction client 5/5 sur 10 courses', date:'25/02/2026', by:'Marcus Holloway' },
-        { id:3, empId:'SA-1005', empName:'Jimmy De Santa', type:'blame', amount:0, reason:'Retard répété — 3 fois cette semaine', date:'07/03/2026', by:'Marcus Holloway' },
-        { id:4, empId:'SA-1004', empName:'Tracey De Santa', type:'warning', amount:0, reason:'Véhicule rendu sale — rappel des règles', date:'05/03/2026', by:'Marcus Holloway' },
-      ],
-    };
-  }
-  // EMS employees
-  else if (['SA-2001','SA-2010','SA-2011','SA-2012','SA-2013','SA-2014'].includes(uid)) {
-    const gradeMap = {'SA-2001':0,'SA-2010':1,'SA-2011':2,'SA-2012':3,'SA-2013':3,'SA-2014':4};
-    DB.job = {
-      company:'EMS Los Santos', icon:'🏥', role:uid==='SA-2001'?'Patron':uid==='SA-2010'?'Chef de Service':'Ambulancier',
-      gradeIndex: gradeMap[uid] !== undefined ? gradeMap[uid] : 3,
-      grades: [
-        { name:'Directeur Médical', payType:'both', fixe:4000, commission:10, prime:800, canManage:true, canHire:true, canFire:true, canEditGrades:true, canStock:true, canArticles:true, canPatients:true, canPOS:true },
-        { name:'Chef de Service', payType:'both', fixe:2800, commission:8, prime:400, canManage:true, canHire:true, canFire:false, canEditGrades:false, canStock:true, canArticles:true, canPatients:true, canPOS:true },
-        { name:'Médecin', payType:'both', fixe:2200, commission:5, prime:200, canManage:false, canHire:false, canFire:false, canEditGrades:false, canStock:true, canArticles:false, canPatients:true, canPOS:true },
-        { name:'Ambulancier', payType:'fixe', fixe:1800, commission:0, prime:100, canManage:false, canHire:false, canFire:false, canEditGrades:false, canStock:false, canArticles:false, canPatients:true, canPOS:true },
-        { name:'Stagiaire', payType:'fixe', fixe:900, commission:0, prime:0, canManage:false, canHire:false, canFire:false, canEditGrades:false, canStock:false, canArticles:false, canPatients:false, canPOS:false },
-      ],
-      employees: [
-        { id:'SA-2001', name:'Dr. Friedlander', grade:0, phone:'555-0600', hired:'01/06/24', status:'active' },
-        { id:'SA-2010', name:'Dr. Kim', grade:1, phone:'555-0610', hired:'15/08/24', status:'active' },
-        { id:'SA-2011', name:'Dr. Martinez', grade:2, phone:'555-0620', hired:'10/01/25', status:'active' },
-        { id:'SA-2012', name:'Sarah Mitchell', grade:3, phone:'555-0630', hired:'20/03/25', status:'active' },
-        { id:'SA-2013', name:'Jake Williams', grade:3, phone:'555-0640', hired:'05/07/25', status:'active' },
-        { id:'SA-2014', name:'Emma Thompson', grade:4, phone:'555-0650', hired:'01/02/26', status:'active' },
-      ],
-      pos: [
-        {name:'Consultation',price:200,emoji:'🩺'},{name:'Soins légers',price:350,emoji:'🩹'},
-        {name:'Soins lourds',price:800,emoji:'💉'},{name:'Opération mineure',price:1500,emoji:'🏥'},
-        {name:'Opération majeure',price:5000,emoji:'⚕️'},{name:'Transport ambulance',price:400,emoji:'🚑'},
-        {name:'Médicaments',price:120,emoji:'💊'},{name:'Analyse sanguine',price:250,emoji:'🧪'},
-        {name:'Radiographie',price:350,emoji:'📷'},{name:'IRM / Scanner',price:1200,emoji:'🧠'},
-        {name:'Plâtre / Attelle',price:300,emoji:'🦴'},{name:'Suture',price:200,emoji:'🪡'},
-      ],
-      invoices: [
-        { id:1, employee:'SA-2011', employeeName:'Dr. Martinez', items:['Consultation','Médicaments'], total:320, tva:16, date:'10/03/2026', time:'10:15' },
-        { id:2, employee:'SA-2012', employeeName:'Sarah Mitchell', items:['Transport ambulance','Soins légers'], total:750, tva:38, date:'10/03/2026', time:'08:40' },
-        { id:3, employee:'SA-2011', employeeName:'Dr. Martinez', items:['Opération mineure'], total:1500, tva:75, date:'09/03/2026', time:'14:20' },
-        { id:4, employee:'SA-2013', employeeName:'Jake Williams', items:['Transport ambulance','Soins lourds'], total:1200, tva:60, date:'09/03/2026', time:'03:15' },
-        { id:5, employee:'SA-2001', employeeName:'Dr. Friedlander', items:['Opération majeure','Analyse sanguine'], total:5250, tva:263, date:'08/03/2026', time:'09:00' },
-        { id:6, employee:'SA-2010', employeeName:'Dr. Kim', items:['IRM / Scanner','Consultation'], total:1400, tva:70, date:'08/03/2026', time:'11:30' },
-      ],
-      weeklyHistory: [
-        { week:'Sem. 10 (03-09 mars)', data:{'SA-2001':{invoiced:12500,count:6},'SA-2010':{invoiced:8200,count:12},'SA-2011':{invoiced:6800,count:15},'SA-2012':{invoiced:4200,count:10},'SA-2013':{invoiced:3800,count:9},'SA-2014':{invoiced:800,count:3}}},
-        { week:'Sem. 9 (24 fév-02 mars)', data:{'SA-2001':{invoiced:10800,count:5},'SA-2010':{invoiced:7500,count:10},'SA-2011':{invoiced:5900,count:12},'SA-2012':{invoiced:3600,count:8},'SA-2013':{invoiced:3200,count:7},'SA-2014':{invoiced:600,count:2}}},
-        { week:'Sem. 8 (17-23 fév)', data:{'SA-2001':{invoiced:11200,count:5},'SA-2010':{invoiced:7800,count:11},'SA-2011':{invoiced:6200,count:14},'SA-2012':{invoiced:3900,count:9},'SA-2013':{invoiced:3500,count:8},'SA-2014':{invoiced:500,count:2}}},
-      ],
-      pendingApps: [
-        { id:'SA-3003', name:'Claude Speed', phone:'555-0999', message:'Formation secourisme + 2 ans aide-soignant.', date:'08/03/2026' },
-        { id:'SA-3004', name:'Toni Cipriani', phone:'555-0444', message:'Ex-pompier. Brevet ambulancier valide.', date:'07/03/2026' },
-      ],
-      employeeExpenses: [
-        { id:1, empId:'SA-2012', empName:'Sarah Mitchell', type:'Essence', amount:95, desc:'Plein ambulance #3', date:'10/03/2026', status:'approved' },
-        { id:2, empId:'SA-2013', empName:'Jake Williams', type:'Essence', amount:110, desc:'Plein ambulance #1 — urgence nuit', date:'09/03/2026', status:'approved' },
-        { id:3, empId:'SA-2011', empName:'Dr. Martinez', type:'Équipement', amount:280, desc:'Stéthoscope neuf — Littmann Classic', date:'08/03/2026', status:'pending' },
-        { id:4, empId:'SA-2014', empName:'Emma Thompson', type:'Repas professionnel', amount:25, desc:'Repas garde de nuit 08/03', date:'08/03/2026', status:'pending' },
-      ],
-      companyExpenses: [
-        { id:1, type:'Loyer', amount:8000, desc:'Clinique Pillbox Hill', date:'01/03/2026', recurring:true },
-        { id:2, type:'Assurance', amount:5500, desc:'RC Pro + Véhicules ambulances', date:'01/03/2026', recurring:true },
-        { id:3, type:'Électricité', amount:1200, desc:'Clinique + équipements médicaux', date:'05/03/2026', recurring:true },
-        { id:4, type:'Maintenance', amount:3500, desc:'Révision ambulance #1 + #3', date:'07/03/2026', recurring:false },
-        { id:5, type:'Fournisseur médical', amount:4200, desc:'Commande MedSupply — réassort mensuel', date:'02/03/2026', recurring:true },
-      ],
-      taxDeclarations: [{ id:1, period:'Q4 2025', ca:156000, expenses:98000, taxDue:8600, date:'20/01/2026', status:'paid' }],
-      stock: [
-        { id:1, name:'Bandages stériles', qty:200, unit:'pcs', min:50, cat:'Soins', emoji:'🩹', notes:'' },
-        { id:2, name:'Morphine (doses)', qty:15, unit:'doses', min:20, cat:'Médicaments', emoji:'💉', notes:'⚠️ Stockage réfrigéré obligatoire — Contrôle DEA' },
-        { id:3, name:'Poches de sang O-', qty:8, unit:'pcs', min:15, cat:'Urgence', emoji:'🩸', notes:'Péremption 42 jours — Vérifier dates !' },
-        { id:4, name:'Poches de sang A+', qty:12, unit:'pcs', min:10, cat:'Urgence', emoji:'🩸', notes:'Péremption 42 jours — Vérifier dates !' },
-        { id:5, name:'Seringues jetables', qty:150, unit:'pcs', min:50, cat:'Soins', emoji:'💉', notes:'' },
-        { id:6, name:'Attelles', qty:25, unit:'pcs', min:10, cat:'Immobilisation', emoji:'🦴', notes:'Tailles S/M/L disponibles' },
-        { id:7, name:'Défibrillateur (batt.)', qty:6, unit:'pcs', min:4, cat:'Équipement', emoji:'⚡', notes:'Vérifier charge mensuelle' },
-        { id:8, name:'Gants stériles (boîte)', qty:40, unit:'boîtes', min:15, cat:'Hygiène', emoji:'🧤', notes:'Taille M — latex free' },
-        { id:9, name:'Compresses hémostatiques', qty:80, unit:'pcs', min:30, cat:'Urgence', emoji:'🟥', notes:'' },
-        { id:10, name:'Tubes analyse sang', qty:200, unit:'pcs', min:50, cat:'Labo', emoji:'🧪', notes:'EDTA + Héparine — 2 types' },
-        { id:11, name:'Adrénaline (doses)', qty:10, unit:'doses', min:8, cat:'Médicaments', emoji:'💊', notes:'⚠️ Usage urgence uniquement' },
-        { id:12, name:'Masques chirurgicaux', qty:300, unit:'pcs', min:100, cat:'Hygiène', emoji:'😷', notes:'FFP2 pour interventions respiratoires' },
-      ],
-      internalMessages: [
-        { id:1, from:'SA-2001', fromName:'Dr. Friedlander', to:'all', subject:'Protocole COVID mis à jour', body:'Équipe,\n\nLe protocole sanitaire a été mis à jour. Masque FFP2 obligatoire pour toutes les interventions respiratoires.\n\nConsultez le document dans le coffre-fort.\n\nDr. Friedlander', date:'10/03/2026', time:'08:00' },
-        { id:2, from:'SA-2010', fromName:'Dr. Kim', to:'all', subject:'Planning gardes — Semaine 11', body:'Lundi: Martinez + Mitchell\nMardi: Williams + Thompson\nMercredi: Kim + Martinez\nJeudi: Mitchell + Williams\nVendredi: Martinez + Thompson\nWeek-end: Rotation habituelle\n\nMerci de confirmer.', date:'09/03/2026', time:'17:00' },
-        { id:3, from:'SA-2012', fromName:'Sarah Mitchell', to:'SA-2010', toName:'Dr. Kim', subject:'Échange garde mercredi', body:'Salut Dr. Kim,\n\nEst-ce que je peux échanger ma garde de jeudi avec mercredi ? RDV personnel jeudi matin.\n\nMerci !', date:'09/03/2026', time:'19:30' },
-        { id:4, from:'SA-2013', fromName:'Jake Williams', to:'all', subject:'Ambulance #1 — fuite huile', body:'Attention, l\'ambulance #1 a une fuite d\'huile sous le moteur. Je l\'ai signalée au garage.\n\nNe pas utiliser pour les longues distances en attendant.', date:'08/03/2026', time:'22:15' },
-        { id:5, from:'SA-2001', fromName:'Dr. Friedlander', to:'SA-2014', toName:'Emma Thompson', subject:'Évaluation de stage', body:'Emma,\n\nVotre évaluation de mi-stage est prévue vendredi à 14h dans mon bureau.\n\nPréparez un résumé de vos interventions de ces 4 dernières semaines.\n\nCordialement.', date:'07/03/2026', time:'10:00' },
-      ],
-      hrRecords: [
-        { id:1, empId:'SA-2011', empName:'Dr. Martinez', type:'prime', amount:500, reason:'15 opérations réussies ce mois — excellence médicale', date:'01/03/2026', by:'Dr. Friedlander' },
-        { id:2, empId:'SA-2012', empName:'Sarah Mitchell', type:'prime', amount:200, reason:'Intervention d\'urgence exemplaire — sauvetage Vinewood', date:'06/03/2026', by:'Dr. Friedlander' },
-        { id:3, empId:'SA-2014', empName:'Emma Thompson', type:'warning', amount:0, reason:'Oubli de remplir le rapport d\'intervention #4521', date:'08/03/2026', by:'Dr. Kim' },
-        { id:4, empId:'SA-2013', empName:'Jake Williams', type:'blame', amount:0, reason:'Non-respect du protocole de stérilisation — rappel formel', date:'04/03/2026', by:'Dr. Friedlander' },
-        { id:5, empId:'SA-2013', empName:'Jake Williams', type:'prime', amount:150, reason:'Remplacement garde de nuit volontaire', date:'02/03/2026', by:'Dr. Kim' },
-      ],
-    };
-    // Add EMS employees to citizens if not there
-    [['SA-2010','Dr. Kim','555-0610'],['SA-2011','Dr. Martinez','555-0620'],['SA-2012','Sarah Mitchell','555-0630'],['SA-2013','Jake Williams','555-0640'],['SA-2014','Emma Thompson','555-0650']].forEach(([id,name,phone]) => {
-      if (!DB.citizens.find(c=>c.id===id)) DB.citizens.push({id,name,phone,pass:'pass',registered:'01/01/2025',job:'EMS Los Santos',role:'Employé'});
-    });
-  }
-  // No job
-  else { DB.job = null; }
+  const citizen = DB.citizens.find(c => c.id === uid);
+  if (!citizen || !citizen.job) { DB.job = null; return; }
+  const jobData = DB.allJobs[citizen.job];
+  if (!jobData) { DB.job = null; return; }
+  const emp = jobData.employees.find(e => e.id === uid && e.status === 'active');
+  if (!emp) { DB.job = null; return; }
+  DB.job = jobData;
+  DB.job.role = citizen.role || jobData.grades[emp.grade]?.name || 'Employé';
+  DB.job.gradeIndex = emp.grade;
+}
+
+// Create new enterprise data structure (called by gov createEnt)
+function createEnterpriseData(name, icon) {
+  DB.allJobs[name] = {
+    company: name, icon: icon || '🏢',
+    grades: [
+      {name:'Patron',payType:'both',fixe:2000,commission:15,prime:300,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
+      {name:'Employé',payType:'fixe',fixe:1000,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
+    ],
+    employees:[], pos:[], invoices:[], weeklyHistory:[],
+    pendingApps:[], employeeExpenses:[], companyExpenses:[],
+    taxDeclarations:[], stock:[], internalMessages:[], hrRecords:[],
+  };
 }
 
 function getPayLabel(g) {
@@ -675,7 +599,7 @@ function doRegister() {
 
 function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
-  initDemoJob();
+  loadJob();
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.add('on');
   const ini = citizen.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
@@ -756,6 +680,17 @@ function toggleSide(){document.getElementById('side').classList.toggle('open');d
 function closeSide(){document.getElementById('side').classList.remove('open');document.getElementById('ov').classList.remove('on')}
 function toast(m,type){const t=document.createElement('div');t.className='toast toast-'+( type||'ok');const ico=type==='err'?'❌':type==='warn'?'⚠️':'✅';t.innerHTML=ico+' '+m;document.body.appendChild(t);setTimeout(()=>t.remove(),3500)}
 function err(m){toast(m,'err')}
+function confirmAction(msg, onYes) {
+  modal(`<div class="modal-t">⚠️ Confirmation</div>
+    <p style="font-size:.88rem;color:var(--t2);margin-bottom:1rem">${msg}</p>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="closeModal();(${onYes})()">Confirmer</button></div>`);
+}
+function confirmDel(msg, fn) {
+  window._pendingDel = fn;
+  modal(`<div class="modal-t">🗑️ Suppression</div>
+    <p style="font-size:.88rem;color:var(--t2);margin-bottom:1rem">${msg}</p>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="closeModal();window._pendingDel()">Supprimer</button></div>`);
+}
 function modal(html){const o=document.createElement('div');o.className='modal-bg';o.onclick=e=>{if(e.target===o)o.remove()};o.innerHTML=`<div class="modal">${html}</div>`;document.body.appendChild(o)}
 function closeModal(){document.querySelector('.modal-bg')?.remove()}
 
@@ -1137,9 +1072,13 @@ function voteCard(l) {
 function castVote(id, choice) {
   DB.voted[id] = choice;
   const l = DB.laws.find(x=>x.id===id);
-  if (choice === 'pour') { l.pour = Math.min(100, l.pour + 1); l.contre = 100 - l.pour; }
-  else { l.contre = Math.min(100, l.contre + 1); l.pour = 100 - l.contre; }
-  l.total++;
+  // Track actual counts
+  if (!l._pour) l._pour = 0;
+  if (!l._contre) l._contre = 0;
+  if (choice === 'pour') l._pour++; else l._contre++;
+  l.total = l._pour + l._contre;
+  l.pour = l.total > 0 ? Math.round(l._pour / l.total * 100) : 0;
+  l.contre = l.total > 0 ? Math.round(l._contre / l.total * 100) : 0;
   toast('Vote ' + choice.toUpperCase() + ' enregistré');
   go('vote');
 }
@@ -1991,7 +1930,7 @@ function pWStock() {
       <td><div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-green" onclick="modalRestockItem(${i})" title="Réappro">📦</button>
         <button class="btn btn-sm btn-outline" onclick="modalEditStock(${i})" title="Modifier">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="if(confirm('Supprimer ${s.name} ?')){DB.job.stock.splice(${i},1);toast('Article supprimé');go('wstock')}" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${s.name}'+' du stock ?',function(){DB.job.stock.splice(${i},1);toast('Article supprimé');go('wstock')})" style="padding:.2rem .4rem">✕</button>
       </div></td>
     </tr>`;
   });
@@ -2046,7 +1985,7 @@ function pWArticles() {
       <td class="mono" style="color:var(--gold)">$${ttc}</td>
       <td><div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-outline" onclick="modalEditArticle2(${i})">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="if(confirm('Supprimer ${it.name} ?')){DB.job.pos.splice(${i},1);toast('Article supprimé');go('warticles')}" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${it.name}'+' ?',function(){DB.job.pos.splice(${i},1);toast('Article supprimé');go('warticles')})" style="padding:.2rem .4rem">✕</button>
       </div></td>
     </tr>`;
   });
@@ -2096,7 +2035,7 @@ function pWTeam() {
     const wd = thisWeek[e.id] || {invoiced:0, count:0};
     const estPay = calcWeekPay(e.grade, wd.invoiced);
     h += `<tr><td class="mono" style="font-size:.74rem">${e.id}</td><td style="font-weight:500">${e.name}<div style="font-size:.7rem;color:var(--t3)">${e.phone}</div></td><td><span class="badge b-gold">${eg.name}</span></td><td style="font-size:.78rem">${getPayLabel(eg)}</td><td class="mono" style="color:var(--blue)">$${wd.invoiced.toLocaleString()} <span style="color:var(--t3);font-size:.7rem">(${wd.count})</span></td><td class="mono" style="color:var(--green);font-weight:600">$${estPay.toLocaleString()}</td><td style="font-size:.78rem">${e.hired}</td>`;
-    if (myGrade.canFire) h += `<td><div style="display:flex;gap:.2rem"><button class="btn btn-sm btn-outline" onclick="modalPromote('${e.id}')">⬆</button><button class="btn btn-sm btn-red" onclick="if(confirm('Révoquer ${e.name} ?')){DB.job.employees.find(x=>x.id==='${e.id}').status='inactive';toast('${e.name} révoqué');go('wteam')}">🚫</button></div></td>`;
+    if (myGrade.canFire) h += `<td><div style="display:flex;gap:.2rem"><button class="btn btn-sm btn-outline" onclick="modalPromote('${e.id}')">⬆</button><button class="btn btn-sm btn-red" onclick="fireEmployee('${e.id}','${e.name}')">🚫</button></div></td>`;
     h += '</tr>';
   });
   h += '</tbody></table></div>';
@@ -2124,11 +2063,33 @@ function doHire() {
   const c = DB.citizens.find(x => x.id === id);
   if (!c) { err('Entrez un ID citoyen valide et recherchez-le d\'abord.'); return; }
   const grade = parseInt(document.getElementById('hGrade').value);
-  DB.job.employees.push({ id: c.id, name: c.name, grade, sales: 0, phone: c.phone, hired: new Date().toLocaleDateString('fr-FR'), status: 'active' });
+  DB.job.employees.push({ id: c.id, name: c.name, grade, phone: c.phone, hired: new Date().toLocaleDateString('fr-FR'), status: 'active' });
   // Update citizen registry
   c.job = DB.job.company;
   c.role = DB.job.grades[grade].name;
+  // Update gov enterprise employee count
+  const ent = DB.enterprises.find(e=>e.name===DB.job.company);
+  if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
   closeModal(); toast(c.name + ' embauché !'); go('wteam');
+}
+function fireEmployee(empId, empName) {
+  modal(`<div class="modal-t">🚫 Révoquer ${empName} ?</div>
+    <p style="font-size:.88rem;color:var(--t2)">Cette action mettra fin à son contrat de travail. Il conservera son historique de salaires.</p>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="doFire('${empId}','${empName}')">Confirmer le licenciement</button></div>`);
+}
+function doFire(empId, empName) {
+  // Update enterprise employee list
+  const emp = DB.job.employees.find(x=>x.id===empId);
+  if (emp) emp.status = 'inactive';
+  // Update citizen registry — remove job
+  const cit = DB.citizens.find(c=>c.id===empId);
+  if (cit) { cit.job = null; cit.role = null; }
+  // Update enterprise employee count in gov
+  const ent = DB.enterprises.find(e=>e.name===DB.job.company);
+  if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
+  closeModal();
+  toast(empName + ' a été révoqué');
+  go('wteam');
 }
 function modalPromote(empId) {
   const e = DB.job.employees.find(x=>x.id===empId);
@@ -2228,10 +2189,13 @@ function pWApps() {
 function acceptApp(idx) {
   const a = DB.job.pendingApps[idx];
   const g = parseInt(document.getElementById('appGrade'+idx).value);
-  DB.job.employees.push({id:a.id, name:a.name, grade:g, sales:0, phone:a.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
+  DB.job.employees.push({id:a.id, name:a.name, grade:g, phone:a.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
   // Update citizen registry
   const cit = DB.citizens.find(c => c.id === a.id);
   if (cit) { cit.job = DB.job.company; cit.role = DB.job.grades[g].name; }
+  // Update gov enterprise employee count
+  const ent = DB.enterprises.find(e=>e.name===DB.job.company);
+  if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
   DB.job.pendingApps.splice(idx, 1);
   toast(a.name + ' embauché !'); buildNav(); go('wapps');
 }
@@ -2372,12 +2336,12 @@ function gEnt() {
       <td style="font-weight:600">${e.icon} ${e.name}</td>
       <td><span class="badge b-blue">${e.type}</span></td>
       <td style="font-size:.82rem">${e.patron}<div class="mono" style="font-size:.68rem;color:var(--t3)">${e.patronId}</div></td>
-      <td>${e.employees}</td>
+      <td>${DB.allJobs[e.name]?DB.allJobs[e.name].employees.filter(x=>x.status==='active').length:e.employees}</td>
       <td><span class="badge ${e.status==='active'?'b-green':e.status==='suspended'?'b-orange':'b-red'}">${e.status==='active'?'Active':e.status==='suspended'?'Suspendue':'Fermée'}</span></td>
       <td><div style="display:flex;gap:.2rem;flex-wrap:wrap">
         <button class="btn btn-sm btn-outline" onclick="modalChangePatron(${i})" title="Changer le patron">👔</button>
         ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
-        <button class="btn btn-sm btn-red" onclick="if(confirm('Supprimer définitivement ${e.name} ?\\n\\nCette action est irréversible.')){DB.enterprises.splice(${i},1);toast('Entreprise supprimée');goGov('gent')}" title="Supprimer">🗑️</button>
+        <button class="btn btn-sm btn-red" onclick="delEnterprise(${i})" title="Supprimer">🗑️</button>
       </div></td></tr>`;
   });
   h += '</tbody></table></div>';
@@ -2394,10 +2358,33 @@ function modalCreateEnt() {
 function createEnt() {
   const n = document.getElementById('ceNom').value || 'Nouvelle Entreprise';
   const pid = document.getElementById('cePatronId').value;
+  const ico = document.getElementById('ceIco').value||'🏢';
   const cit = DB.citizens.find(c=>c.id===pid);
-  DB.enterprises.push({id:'ENT-'+String(DB.enterprises.length+1).padStart(3,'0'), name:n, icon:document.getElementById('ceIco').value||'🏢', type:document.getElementById('ceType').value, patron:cit?cit.name:'—', patronId:pid, status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:0});
-  if (cit) { cit.job = n; cit.role = 'Patron'; }
+  DB.enterprises.push({id:'ENT-'+String(DB.enterprises.length+1).padStart(3,'0'), name:n, icon:ico, type:document.getElementById('ceType').value, patron:cit?cit.name:'—', patronId:pid, status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:1});
+  // Create the job data structure so employees can work
+  createEnterpriseData(n, ico);
+  // Add patron as first employee
+  if (cit) {
+    cit.job = n; cit.role = 'Patron';
+    DB.allJobs[n].employees.push({id:cit.id, name:cit.name, grade:0, phone:cit.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
+  }
   closeModal(); toast(n + ' créée — Patron: ' + (cit?cit.name:'—')); goGov('gent');
+}
+function delEnterprise(idx) {
+  const e = DB.enterprises[idx];
+  confirmDel('Supprimer définitivement ' + e.name + ' ? Cette action est irréversible.', function(){
+    // Remove all employees from citizen registry
+    if (DB.allJobs[e.name]) {
+      DB.allJobs[e.name].employees.forEach(emp => {
+        const cit = DB.citizens.find(c => c.id === emp.id);
+        if (cit) { cit.job = null; cit.role = null; }
+      });
+      delete DB.allJobs[e.name];
+    }
+    DB.enterprises.splice(idx, 1);
+    toast('Entreprise supprimée');
+    goGov('gent');
+  });
 }
 function modalChangePatron(idx) {
   const e = DB.enterprises[idx];
@@ -2418,6 +2405,13 @@ function changePatron(idx) {
   ent.patron = newCit ? newCit.name : '—';
   ent.patronId = newId;
   if (newCit) { newCit.job = ent.name; newCit.role = 'Patron'; }
+  // Update allJobs — add new patron as grade 0 employee if not already there
+  const jobData = DB.allJobs[ent.name];
+  if (jobData && newCit) {
+    const existing = jobData.employees.find(e=>e.id===newCit.id);
+    if (existing) { existing.grade = 0; existing.status = 'active'; }
+    else { jobData.employees.push({id:newCit.id, name:newCit.name, grade:0, phone:newCit.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
+  }
   closeModal(); toast('Patron de ' + ent.name + ' → ' + (newCit?newCit.name:'—')); goGov('gent');
 }
 
@@ -2518,7 +2512,7 @@ function gBudget() {
         <div style="display:flex;gap:.3rem;align-items:center">
           <span class="mono" style="font-size:.85rem;color:var(--gold)">$${inv.spent.toLocaleString()} / $${inv.budget.toLocaleString()}</span>
           ${inv.status!=='done'?`<button class="btn btn-sm btn-outline" onclick="modalFundProject(${idx})" title="Débloquer des fonds">💰</button>`:''}
-          <button class="btn btn-sm btn-red" onclick="if(confirm('Supprimer ce projet ?')){DB.govBudget.investments.splice(${idx},1);toast('Projet supprimé');goGov('gbudget')}" style="padding:.2rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer ce projet ?',function(){DB.govBudget.investments.splice(${idx},1);toast('Projet supprimé');goGov('gbudget')})" style="padding:.2rem .4rem">✕</button>
         </div>
       </div>
       <p style="font-size:.8rem;color:var(--t2)">${inv.desc}</p>
@@ -2606,7 +2600,7 @@ function gCodes() {
         <td style="font-size:.78rem">${a.sanction.substring(0,40)}${a.sanction.length>40?'...':''}</td>
         <td><div style="display:flex;gap:.2rem">
           <button class="btn btn-sm btn-outline" onclick="modalEditArticle('${code.id}',${ai})">✏️</button>
-          <button class="btn btn-sm btn-red" onclick="if(confirm('Supprimer ${a.ref} ?')){DB.legalCodes[${ci}].articles.splice(${ai},1);toast('Article supprimé');goGov('gcodes')}" style="padding:.2rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${a.ref}'+' ?',function(){DB.legalCodes[${ci}].articles.splice(${ai},1);toast('Article supprimé');goGov('gcodes')})" style="padding:.2rem .4rem">✕</button>
         </div></td>
       </tr>`;
     });
@@ -2660,10 +2654,17 @@ function gDefcon() {
 }
 function changeDefcon(n) {
   if (n === DB.defcon) return;
-  const reason = prompt('Motif du changement de DEFCON :');
-  if (!reason) return;
+  modal(`<div class="modal-t">🚨 Changement DEFCON → Niveau ${n}</div>
+    <div style="text-align:center;font-size:3rem;font-weight:700;color:${['','var(--red)','var(--orange)','var(--gold)','var(--blue)','var(--green)'][n]};margin:.5rem 0">${n}</div>
+    <div class="fg"><label>Motif du changement</label><textarea id="dcReason" rows="3" placeholder="Raison du changement de niveau DEFCON..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="doChangeDefcon(${n})">Confirmer</button></div>`);
+}
+function doChangeDefcon(n) {
+  const reason = document.getElementById('dcReason').value.trim();
+  if (!reason) { err('Motif obligatoire.'); return; }
   DB.defconLog.unshift({ date: new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), from: DB.defcon, to: n, reason: reason, author: DB.govUser.name });
   DB.defcon = n;
+  closeModal();
   toast('DEFCON passé au niveau ' + n);
   goGov('gdefcon');
 }
@@ -2723,6 +2724,7 @@ function gVotes() {
 }
 
 // ============ INIT ============
+initAllJobs();
 </script>
 </body>
 </html>
