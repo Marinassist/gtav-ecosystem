@@ -96,7 +96,8 @@ tr:hover td{background:rgba(240,180,41,.02)}
 .stat-s{font-size:.7rem;color:var(--t2)}
 
 /* TOAST */
-.toast{position:fixed;bottom:1rem;right:1rem;background:var(--bg3);border:1px solid var(--green);color:var(--t1);padding:.65rem 1rem;border-radius:8px;font-size:.82rem;z-index:9999;animation:toastIn .3s ease,toastOut .3s ease 2.5s forwards;display:flex;align-items:center;gap:.4rem}
+.toast{position:fixed;bottom:1rem;right:1rem;background:var(--bg3);border:1px solid var(--green);color:var(--t1);padding:.65rem 1rem;border-radius:8px;font-size:.82rem;z-index:9999;animation:toastIn .3s ease,toastOut .3s ease 3s forwards;display:flex;align-items:center;gap:.4rem;max-width:400px}
+.toast-err{border-color:var(--red);background:rgba(239,68,68,.12)}.toast-warn{border-color:var(--orange);background:rgba(249,115,22,.12)}
 @keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
 @keyframes toastOut{to{opacity:0;transform:translateY(20px)}}
 
@@ -307,8 +308,6 @@ const DB = {
     { id:'SA-3004', name:'Toni Cipriani', phone:'555-0444', pass:'pass', registered:'08/03/2026', job:null, role:null },
     { id:'SA-3005', name:'Victor Vance', phone:'555-0333', pass:'pass', registered:'09/03/2026', job:null, role:null },
   ],
-  _nextId: 4000,
-
   // CITIZEN SALARY RECORDS — persists even after firing
   citizenSalaries: {
     'SA-1001': [
@@ -632,7 +631,15 @@ function calcWeekPay(grade, invoiced) {
 }
 
 // ============ AUTH ============
-function genCitizenId() { return 'SA-' + (DB._nextId++); }
+function genCitizenId() {
+  let id;
+  const existing = DB.citizens.map(c => c.id);
+  do {
+    const num = Math.floor(1000 + Math.random() * 9000); // 1000-9999
+    id = 'SA-' + num;
+  } while (existing.includes(id));
+  return id;
+}
 
 function switchCitizenMode(mode) {
   document.querySelectorAll('.auth-subtab').forEach((t,i) => t.classList.toggle('on', (mode==='login'&&i===0)||(mode==='register'&&i===1)));
@@ -643,10 +650,10 @@ function switchCitizenMode(mode) {
 function doLogin() {
   const id = document.getElementById('lId').value.trim().toUpperCase();
   const pass = document.getElementById('lPass').value;
-  if (!id || !pass) { alert('Entrez votre identifiant et mot de passe.'); return; }
+  if (!id || !pass) { err('Entrez votre identifiant et mot de passe.'); return; }
   const citizen = DB.citizens.find(c => c.id === id);
-  if (!citizen) { alert('Identifiant inconnu. Créez un compte si vous êtes nouveau.'); return; }
-  if (citizen.pass !== pass) { alert('Mot de passe incorrect.'); return; }
+  if (!citizen) { err('Identifiant inconnu. Créez un compte si vous êtes nouveau.'); return; }
+  if (citizen.pass !== pass) { err('Mot de passe incorrect.'); return; }
   loginAs(citizen);
 }
 
@@ -655,11 +662,11 @@ function doRegister() {
   const phone = document.getElementById('rPhone').value.trim();
   const pass = document.getElementById('rPass').value;
   const pass2 = document.getElementById('rPass2').value;
-  if (!name) { alert('Entrez votre nom.'); return; }
-  if (!pass || pass.length < 3) { alert('Le mot de passe doit contenir au moins 3 caractères.'); return; }
-  if (pass !== pass2) { alert('Les mots de passe ne correspondent pas.'); return; }
+  if (!name) { err('Entrez votre nom.'); return; }
+  if (!pass || pass.length < 3) { err('Le mot de passe doit contenir au moins 3 caractères.'); return; }
+  if (pass !== pass2) { err('Les mots de passe ne correspondent pas.'); return; }
   // Check duplicate name
-  if (DB.citizens.find(c => c.name.toLowerCase() === name.toLowerCase())) { alert('Ce nom est déjà pris. Utilisez la connexion si vous avez déjà un compte.'); return; }
+  if (DB.citizens.find(c => c.name.toLowerCase() === name.toLowerCase())) { err('Ce nom est déjà pris. Utilisez la connexion si vous avez déjà un compte.'); return; }
   const citizen = { id: genCitizenId(), name, phone: phone || '555-0000', pass, registered: new Date().toLocaleDateString('fr-FR'), job: null, role: null };
   DB.citizens.push(citizen);
   loginAs(citizen);
@@ -747,7 +754,8 @@ function go(p) {
 }
 function toggleSide(){document.getElementById('side').classList.toggle('open');document.getElementById('ov').classList.toggle('on')}
 function closeSide(){document.getElementById('side').classList.remove('open');document.getElementById('ov').classList.remove('on')}
-function toast(m){const t=document.createElement('div');t.className='toast';t.innerHTML='✅ '+m;document.body.appendChild(t);setTimeout(()=>t.remove(),3000)}
+function toast(m,type){const t=document.createElement('div');t.className='toast toast-'+( type||'ok');const ico=type==='err'?'❌':type==='warn'?'⚠️':'✅';t.innerHTML=ico+' '+m;document.body.appendChild(t);setTimeout(()=>t.remove(),3500)}
+function err(m){toast(m,'err')}
 function modal(html){const o=document.createElement('div');o.className='modal-bg';o.onclick=e=>{if(e.target===o)o.remove()};o.innerHTML=`<div class="modal">${html}</div>`;document.body.appendChild(o)}
 function closeModal(){document.querySelector('.modal-bg')?.remove()}
 
@@ -1013,8 +1021,8 @@ function sendNewMsg() {
   const to = document.getElementById('compTo').value;
   const subj = document.getElementById('compSubj').value.trim();
   const body = document.getElementById('compBody').value.trim();
-  if (!subj) { alert('Entrez un objet.'); return; }
-  if (!body) { alert('Écrivez un message.'); return; }
+  if (!subj) { err('Entrez un objet.'); return; }
+  if (!body) { err('Écrivez un message.'); return; }
   DB.messages.unshift({
     id: Date.now(), from: DB.user.name, to: to, icon: '📤',
     subject: subj, body: body,
@@ -1048,7 +1056,7 @@ function sendReply() {
   const orig = DB.messages[DB._msgReplyTo];
   const subj = document.getElementById('reSubj').value.trim();
   const body = document.getElementById('reBody').value.trim();
-  if (!body) { alert('Écrivez une réponse.'); return; }
+  if (!body) { err('Écrivez une réponse.'); return; }
   DB.messages.unshift({
     id: Date.now(), from: DB.user.name, to: orig.from, icon: '📤',
     subject: subj || 'RE: ' + orig.subject, body: body,
@@ -1341,8 +1349,8 @@ function submitExpense() {
   const type = document.getElementById('efType').value;
   const amount = parseInt(document.getElementById('efAmount').value);
   const desc = document.getElementById('efDesc').value.trim();
-  if (!amount || amount <= 0) { alert('Entrez un montant valide.'); return; }
-  if (!desc) { alert('Ajoutez une description.'); return; }
+  if (!amount || amount <= 0) { err('Entrez un montant valide.'); return; }
+  if (!desc) { err('Ajoutez une description.'); return; }
   DB.job.employeeExpenses.unshift({
     id: Date.now(), empId: DB.user.id, empName: DB.user.name,
     type, amount, desc, date: new Date().toLocaleDateString('fr-FR'), status: 'pending'
@@ -1432,7 +1440,7 @@ function submitHR(type) {
   const empId = document.getElementById('hrEmp').value;
   const emp = DB.job.employees.find(e => e.id === empId);
   const reason = document.getElementById('hrReason').value.trim();
-  if (!reason) { alert('Motif obligatoire.'); return; }
+  if (!reason) { err('Motif obligatoire.'); return; }
 
   const isPrime = type === 'prime';
   const sancType = !isPrime ? document.getElementById('hrSancType').value : 'prime';
@@ -1564,7 +1572,7 @@ function modalAddCompanyExpense() {
     <div class="row"><div class="fg"><label>Type</label><select id="ceType"><option>Loyer</option><option>Assurance</option><option>Électricité</option><option>Eau</option><option>Réparation</option><option>Fournitures</option><option>Marketing</option><option>Juridique</option><option>Autre</option></select></div><div class="fg"><label>Montant ($)</label><input type="number" id="ceAmt" placeholder="0"></div></div>
     <div class="fg"><label>Description</label><input id="ceDesc" placeholder="Détail de la dépense"></div>
     <div class="fg"><label style="display:flex;align-items:center;gap:.4rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ceRecur"> Charge récurrente (mensuelle)</label></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){alert('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
 }
 
 function payWeeklySalaries() {
@@ -1729,7 +1737,7 @@ function sendInternalMsg() {
   const to = document.getElementById('chatTo').value;
   const subj = document.getElementById('chatSubj').value.trim();
   const body = document.getElementById('chatBody').value.trim();
-  if (!subj || !body) { alert('Remplissez l\'objet et le message.'); return; }
+  if (!subj || !body) { err('Remplissez l\'objet et le message.'); return; }
   const toEmp = to === 'all' ? null : DB.job.employees.find(e=>e.id===to);
   DB.job.internalMessages.unshift({
     id: Date.now(), from: DB.user.id, fromName: DB.user.name,
@@ -1872,7 +1880,7 @@ function modalCreateTempPatient() {
     <p style="font-size:.82rem;color:var(--orange);margin-bottom:.8rem">Pour un patient sans compte citoyen. Le dossier pourra être lié à un citoyen plus tard.</p>
     <div class="fg"><label>Nom / Description du patient</label><input id="tpName" placeholder="Ex: Homme ~30 ans, blessé Vinewood"></div>
     <div class="fg"><label>Détails supplémentaires</label><input id="tpDesc" placeholder="Circonstances, lieu trouvé..."></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('tpName').value||'Patient inconnu';DB.tempPatients.push({id:'TEMP-'+String(DB.tempPatients.length+1).padStart(3,'0'),name:n,desc:document.getElementById('tpDesc').value||'—',created:new Date().toLocaleDateString('fr-FR'),createdBy:DB.user.name,history:[]});closeModal();toast('Dossier temporaire créé');go('wpatients')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('tpName').value||'Patient inconnu';DB.tempPatients.push({id:'TEMP-'+Math.floor(100+Math.random()*900),name:n,desc:document.getElementById('tpDesc').value||'—',created:new Date().toLocaleDateString('fr-FR'),createdBy:DB.user.name,history:[]});closeModal();toast('Dossier temporaire créé');go('wpatients')">Créer</button></div>`);
 }
 
 function modalLinkTempPatient(tmpIdx) {
@@ -2055,7 +2063,7 @@ function modalAddArticle2() {
   modal(`<div class="modal-t">🏷️ Nouvel Article</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="a2Name" placeholder="Ex: Course Express"></div><div class="fg"><label>Emoji</label><input id="a2Emoji" value="🏷️" style="width:60px"></div></div>
     <div class="fg"><label>Prix ($)</label><input type="number" id="a2Price" placeholder="0"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('a2Name').value,p=parseInt(document.getElementById('a2Price').value);if(!n||!p){alert('Nom et prix requis');return}DB.job.pos.push({name:n,price:p,emoji:document.getElementById('a2Emoji').value||'🏷️'});closeModal();toast(n+' ajouté à la caisse');go('warticles')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('a2Name').value,p=parseInt(document.getElementById('a2Price').value);if(!n||!p){err('Nom et prix requis');return}DB.job.pos.push({name:n,price:p,emoji:document.getElementById('a2Emoji').value||'🏷️'});closeModal();toast(n+' ajouté à la caisse');go('warticles')">Ajouter</button></div>`);
 }
 
 function modalEditArticle2(idx) {
@@ -2114,7 +2122,7 @@ function lookupCitizen() {
 function doHire() {
   const id = document.getElementById('hId').value.trim();
   const c = DB.citizens.find(x => x.id === id);
-  if (!c) { alert('Entrez un ID citoyen valide et recherchez-le d\'abord.'); return; }
+  if (!c) { err('Entrez un ID citoyen valide et recherchez-le d\'abord.'); return; }
   const grade = parseInt(document.getElementById('hGrade').value);
   DB.job.employees.push({ id: c.id, name: c.name, grade, sales: 0, phone: c.phone, hired: new Date().toLocaleDateString('fr-FR'), status: 'active' });
   // Update citizen registry
@@ -2240,7 +2248,7 @@ function doGovLogin() {
   const id = document.getElementById('gId').value.trim() || 'GOV-001';
   const name = document.getElementById('gName').value.trim() || 'Gouverneur SA';
   const code = document.getElementById('gCode').value.trim();
-  if (code !== 'admin') { alert('Code d\'accès incorrect.'); return; }
+  if (code !== 'admin') { err('Code d\'accès incorrect.'); return; }
   DB.govUser = { id, name };
   document.getElementById('auth').classList.add('hide');
   document.getElementById('govApp').classList.add('on');
@@ -2350,7 +2358,7 @@ function modalResetPass(citizenId) {
   modal(`<div class="modal-t">🔑 Réinitialiser le Mot de Passe</div>
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">Citoyen: <strong>${c.name}</strong> <span class="mono" style="color:var(--t3)">${c.id}</span></div>
     <div class="fg"><label>Nouveau mot de passe</label><input id="rpPass" type="text" placeholder="Nouveau MDP"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const p=document.getElementById('rpPass').value;if(!p||p.length<3){alert('Min 3 caractères');return}DB.citizens.find(x=>x.id==='${c.id}').pass=p;closeModal();toast('MDP de ${c.name} réinitialisé')">Réinitialiser</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const p=document.getElementById('rpPass').value;if(!p||p.length<3){err('Min 3 caractères');return}DB.citizens.find(x=>x.id==='${c.id}').pass=p;closeModal();toast('MDP de ${c.name} réinitialisé')">Réinitialiser</button></div>`);
 }
 
 // ============ GOV: ENTREPRISES ============
@@ -2537,7 +2545,7 @@ function modalAddBudgetItem(type) {
     <div class="row"><div class="fg"><label>Type</label><select id="biType">${typeOpts}</select></div><div class="fg"><label>Montant ($)</label><input type="number" id="biAmt" placeholder="0"></div></div>
     <div class="fg"><label>Description</label><input id="biDesc" placeholder="Détail..."></div>
     ${!isIncome?'<div class="fg"><label>Bénéficiaire (optionnel)</label><input id="biBenef" placeholder="Ex: EMS Los Santos"></div>':''}
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm ${isIncome?'btn-green':'btn-red'}" onclick="const a=parseInt(document.getElementById('biAmt').value);if(!a){alert('Montant requis');return}const item={id:Date.now(),type:document.getElementById('biType').value,amount:a,desc:document.getElementById('biDesc').value||'—',date:new Date().toLocaleDateString('fr-FR')};${isIncome?'DB.govBudget.income.push(item);DB.govBudget.balance+=a':'item.beneficiary=document.getElementById(\"biBenef\")?.value||\"\";DB.govBudget.expenses.push(item);DB.govBudget.balance-=a'};closeModal();toast('${isIncome?'Recette':'Dépense'} enregistrée');goGov('gbudget')">Enregistrer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm ${isIncome?'btn-green':'btn-red'}" onclick="const a=parseInt(document.getElementById('biAmt').value);if(!a){err('Montant requis');return}const item={id:Date.now(),type:document.getElementById('biType').value,amount:a,desc:document.getElementById('biDesc').value||'—',date:new Date().toLocaleDateString('fr-FR')};${isIncome?'DB.govBudget.income.push(item);DB.govBudget.balance+=a':'item.beneficiary=document.getElementById(\"biBenef\")?.value||\"\";DB.govBudget.expenses.push(item);DB.govBudget.balance-=a'};closeModal();toast('${isIncome?'Recette':'Dépense'} enregistrée');goGov('gbudget')">Enregistrer</button></div>`);
 }
 
 function modalAddInvestment() {
@@ -2545,7 +2553,7 @@ function modalAddInvestment() {
     <div class="fg"><label>Nom du projet</label><input id="invName" placeholder="Ex: Construction hôpital"></div>
     <div class="row"><div class="fg"><label>Budget total ($)</label><input type="number" id="invBudget" placeholder="0"></div><div class="fg"><label>Statut initial</label><select id="invStatus"><option value="planned">Planifié</option><option value="active">En cours</option></select></div></div>
     <div class="fg"><label>Description</label><textarea id="invDesc" placeholder="Détail du projet..."></textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('invName').value;if(!n){alert('Nom requis');return}DB.govBudget.investments.push({id:Date.now(),name:n,budget:parseInt(document.getElementById('invBudget').value)||0,spent:0,status:document.getElementById('invStatus').value,desc:document.getElementById('invDesc').value||'—'});closeModal();toast('Projet créé');goGov('gbudget')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('invName').value;if(!n){err('Nom requis');return}DB.govBudget.investments.push({id:Date.now(),name:n,budget:parseInt(document.getElementById('invBudget').value)||0,spent:0,status:document.getElementById('invStatus').value,desc:document.getElementById('invDesc').value||'—'});closeModal();toast('Projet créé');goGov('gbudget')">Créer</button></div>`);
 }
 
 function modalFundProject(idx) {
@@ -2607,7 +2615,7 @@ function gCodes() {
 
   h += `<div class="card"><div class="card-t">➕ Créer un Nouveau Code</div>
     <div class="row"><div class="fg"><label>Nom du code</label><input id="ncName" placeholder="Ex: Code Maritime"></div><div class="fg"><label>Icône</label><input id="ncIcon" placeholder="⚓" style="width:60px"></div><div class="fg"><label>Couleur</label><select id="ncColor"><option value="var(--red)">Rouge</option><option value="var(--blue)">Bleu</option><option value="var(--gold)">Or</option><option value="var(--green)">Vert</option><option value="var(--purple)">Violet</option><option value="var(--orange)">Orange</option><option value="var(--cyan)">Cyan</option></select></div></div>
-    <button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ncName').value;if(!n){alert('Nom requis');return}DB.legalCodes.push({id:n.toLowerCase().replace(/\\s+/g,'_'),name:n,icon:document.getElementById('ncIcon').value||'📋',color:document.getElementById('ncColor').value,articles:[]});toast(n+' créé');goGov('gcodes')">Créer le Code</button>
+    <button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ncName').value;if(!n){err('Nom requis');return}DB.legalCodes.push({id:n.toLowerCase().replace(/\\s+/g,'_'),name:n,icon:document.getElementById('ncIcon').value||'📋',color:document.getElementById('ncColor').value,articles:[]});toast(n+' créé');goGov('gcodes')">Créer le Code</button>
   </div>`;
   return h;
 }
@@ -2692,7 +2700,7 @@ function gVotes() {
     <div class="fg"><label>Titre de la proposition</label><input id="lvTitle" placeholder="Ex: Légalisation du..."></div>
     <div class="fg"><label>Description</label><textarea id="lvDesc" rows="3" placeholder="Détail de la proposition..."></textarea></div>
     <div class="fg"><label>Date limite du scrutin</label><input id="lvDead" type="date"></div>
-    <button class="btn btn-gold" onclick="const t=document.getElementById('lvTitle').value;if(!t){alert('Titre requis');return}DB.laws.unshift({id:DB.laws.length+1,title:t,desc:document.getElementById('lvDesc').value||'—',pour:0,contre:0,total:0,status:'open',deadline:document.getElementById('lvDead').value||'—'});document.getElementById('lvTitle').value='';document.getElementById('lvDesc').value='';toast('Loi soumise au vote');goGov('gvotes')">📤 Soumettre au Vote Citoyen</button></div>`;
+    <button class="btn btn-gold" onclick="const t=document.getElementById('lvTitle').value;if(!t){err('Titre requis');return}DB.laws.unshift({id:DB.laws.length+1,title:t,desc:document.getElementById('lvDesc').value||'—',pour:0,contre:0,total:0,status:'open',deadline:document.getElementById('lvDead').value||'—'});document.getElementById('lvTitle').value='';document.getElementById('lvDesc').value='';toast('Loi soumise au vote');goGov('gvotes')">📤 Soumettre au Vote Citoyen</button></div>`;
   h += '<div class="card"><div class="card-t">📋 Lois en Cours & Passées</div>';
   DB.laws.forEach((l,i) => {
     h += `<div style="padding:.7rem 0;border-bottom:1px solid rgba(30,41,59,.3)">
