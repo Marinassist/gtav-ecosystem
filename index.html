@@ -261,9 +261,9 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // ============ PERSISTENCE — SUPABASE ============
-let _saving = false;
-let _saveQueued = false;
-let _remoteSync = false; // true when receiving realtime update — prevents re-saving
+let _saving = true;
+let _saveQueued = true;
+let _remoteSync = true; // true when receiving realtime update — prevents re-saving
 
 function saveDB() {
   if (_remoteSync) return;
