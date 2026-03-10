@@ -200,7 +200,6 @@ tr:hover td{background:rgba(240,180,41,.02)}
       <div class="fg"><label>Nom de l'Agent</label><input id="gName" placeholder="Ex: Gouverneur SA"></div>
       <div class="fg"><label>Code d'Accès Sécurisé</label><input id="gCode" type="password" placeholder="••••••••"></div>
       <button class="btn btn-gold" onclick="doGovLogin()" style="background:linear-gradient(135deg,#ef4444,#b91c1c)">🔐 Accès Sécurisé</button>
-      <div style="text-align:center;margin-top:.7rem;font-size:.7rem;color:var(--t3)">Code par défaut pour la démo: <strong style="color:var(--t2)">admin</strong></div>
     </div>
   </div>
 </div>
@@ -270,7 +269,7 @@ function getPayload() {
     citizenSalaries: DB.citizenSalaries, tempPatients: DB.tempPatients,
     taxConfig: DB.taxConfig, govBudget: DB.govBudget,
     govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault, defconProtos: DB.defconProtos,
-    messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
+    govAccounts: DB.govAccounts, messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
   };
 }
 
@@ -416,6 +415,7 @@ const DB = {
   jobs: [],
   job: null,
   govUser: null,
+  govAccounts: [],
   defcon: 5,
   govTaxDeclarations: [],
   govBudget: { balance: 0, income: [], expenses: [], investments: [] },
@@ -2238,21 +2238,46 @@ function switchAuth(mode) {
 
 // ============ GOV AUTH ============
 function doGovLogin() {
-  const id = document.getElementById('gId').value.trim() || 'GOV-001';
-  const name = document.getElementById('gName').value.trim() || 'Gouverneur SA';
+  const id = document.getElementById('gId').value.trim();
+  const name = document.getElementById('gName').value.trim();
   const code = document.getElementById('gCode').value.trim();
-  if (code !== 'admin') { err('Code d\'accès incorrect.'); return; }
-  DB.govUser = { id, name };
+  if (!id || !code) { err('Identifiant et code requis.'); return; }
+  // Check against stored gov accounts
+  if (!DB.govAccounts || !DB.govAccounts.length) { err('Aucun compte gouvernement configuré.'); return; }
+  const account = DB.govAccounts.find(function(a) { return a.id === id && a.code === code; });
+  if (!account) { err('Code d\'accès incorrect.'); return; }
+  DB.govUser = { id: account.id, name: name || account.name };
   document.getElementById('auth').classList.add('hide');
   document.getElementById('govApp').classList.add('on');
-  document.getElementById('gAv').textContent = name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
-  document.getElementById('gSName').textContent = name;
+  document.getElementById('gAv').textContent = (name||account.name).split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  document.getElementById('gSName').textContent = name || account.name;
   buildGovNav(); goGov('gdash');
 }
 function doGovLogout() {
   DB.govUser = null;
   document.getElementById('govApp').classList.remove('on');
   document.getElementById('auth').classList.remove('hide');
+}
+function modalChangeGovPass() {
+  modal(`<div class="modal-t">🔑 Changer le Code d'Accès Gouvernement</div>
+    <div class="fg"><label>Code actuel</label><input id="gpOld" type="password" placeholder="Entrez le code actuel"></div>
+    <div class="fg"><label>Nouveau code</label><input id="gpNew" type="password" placeholder="Nouveau code d'accès"></div>
+    <div class="fg"><label>Confirmer le nouveau code</label><input id="gpNew2" type="password" placeholder="Confirmer"></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="doChangeGovPass()">Changer</button></div>`);
+}
+function doChangeGovPass() {
+  var oldCode = document.getElementById('gpOld').value.trim();
+  var newCode = document.getElementById('gpNew').value.trim();
+  var newCode2 = document.getElementById('gpNew2').value.trim();
+  if (!oldCode || !newCode) { err('Remplissez tous les champs.'); return; }
+  if (newCode.length < 4) { err('Le nouveau code doit faire au moins 4 caractères.'); return; }
+  if (newCode !== newCode2) { err('Les nouveaux codes ne correspondent pas.'); return; }
+  var account = DB.govAccounts.find(function(a) { return a.id === DB.govUser.id; });
+  if (!account || account.code !== oldCode) { err('Code actuel incorrect.'); return; }
+  account.code = newCode;
+  closeModal();
+  toast('Code d\'accès modifié avec succès');
+  saveDB();
 }
 function buildGovNav() {
   const n = document.getElementById('gNav'); n.innerHTML = '';
@@ -2306,6 +2331,7 @@ function gDash() {
     <button class="btn btn-sm btn-outline" onclick="goGov('gdecree')">📜 Décrets</button>
     <button class="btn btn-sm btn-outline" onclick="goGov('gdefcon')">🚨 DEFCON</button>
     <button class="btn btn-sm btn-outline" onclick="goGov('gvault')">🔒 Coffre-Fort</button>
+    <button class="btn btn-sm btn-red" onclick="modalChangeGovPass()" style="margin-left:auto">🔑 Changer le Code</button>
   </div></div>`;
   h += `<div class="card"><div class="card-t">📋 Derniers Décrets</div>`;
   DB.decrees.slice(0,3).forEach(d => h += `<div style="padding:.5rem 0;border-bottom:1px solid rgba(30,41,59,.3);font-size:.84rem"><strong class="mono" style="color:var(--gold)">${d.code}</strong> — ${d.title} <span style="font-size:.7rem;color:var(--t3)">${d.date}</span></div>`);
