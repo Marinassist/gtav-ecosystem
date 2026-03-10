@@ -181,10 +181,6 @@ tr:hover td{background:rgba(240,180,41,.02)}
         <div class="fg"><label>Identifiant Citoyen</label><input id="lId" placeholder="Ex: SA-4000"></div>
         <div class="fg"><label>Mot de passe</label><input id="lPass" type="password" placeholder="••••••••"></div>
         <button class="btn btn-gold" onclick="doLogin()">Se Connecter</button>
-        <div style="text-align:center;margin-top:.7rem;font-size:.7rem;color:var(--t3)">
-          Démo Taxi: <strong style="color:var(--t2)">SA-1001</strong> / <strong style="color:var(--t2)">pass</strong><br>
-          Démo EMS: <strong style="color:var(--t2)">SA-2001</strong> / <strong style="color:var(--t2)">pass</strong>
-        </div>
         <div style="text-align:center;margin-top:.5rem"><button class="btn btn-sm btn-outline" style="font-size:.65rem;padding:.2rem .5rem;opacity:.5" onclick="resetAllData()">🔄 Réinitialiser toutes les données</button></div>
         <div id="connStatus" style="text-align:center;margin-top:.5rem;font-size:.65rem;color:var(--t3)">⏳ Connexion à Supabase...</div>
       </div>
@@ -412,148 +408,23 @@ const DB = {
   _vaultView: null,
   _vaultRead: undefined,
 
-  // HEALTH RECORDS — per citizen, accessible by EMS
-  healthRecords: {
-    'SA-1001': { blood:'O+', allergies:'Pénicilline', height:'182 cm', weight:'78 kg', emergency:'Amanda De Santa — 555-0324', conditions:'Aucune pathologie chronique', history:[
-      { date:'08/03/2026', type:'Soins', title:'Blessure par balle — épaule gauche', doctor:'Dr. Friedlander', notes:'Extraction projectile + suture. Repos 7 jours.', badge:'b-red' },
-      { date:'25/02/2026', type:'Analyse', title:'Bilan sanguin complet', doctor:'Dr. Friedlander', notes:'Tous marqueurs normaux. Cholestérol légèrement élevé.', badge:'b-blue' },
-      { date:'05/01/2026', type:'Opération', title:'Opération genou droit', doctor:'Dr. Kim', notes:'Arthroscopie réussie. Rééducation 4 semaines.', badge:'b-purple' },
-    ]},
-    'SA-1002': { blood:'A-', allergies:'Aucune', height:'178 cm', weight:'82 kg', emergency:'Franklin Clinton — 555-0455', conditions:'Ancienne fracture tibia (2024)', history:[
-      { date:'02/03/2026', type:'Consultation', title:'Visite de contrôle', doctor:'Dr. Martinez', notes:'RAS. Bonne condition physique.', badge:'b-green' },
-      { date:'15/01/2026', type:'Soins', title:'Lacération bras droit', doctor:'Dr. Kim', notes:'Suture 8 points. Cicatrisation normale.', badge:'b-red' },
-    ]},
-    'SA-2004': { blood:'AB+', allergies:'Aspirine', height:'185 cm', weight:'90 kg', emergency:'Ron Jakowski — 555-0191', conditions:'Trouble de la personnalité — suivi psy recommandé', history:[
-      { date:'06/03/2026', type:'Urgence', title:'Brûlures 2ème degré — mains', doctor:'Dr. Friedlander', notes:'Explosion accidentelle. Pansements + crème. Contrôle J+7.', badge:'b-orange' },
-      { date:'20/02/2026', type:'Soins', title:'Fracture nez — bagarre', doctor:'Dr. Martinez', notes:'Réduction fermée. Attelle nasale 10 jours.', badge:'b-red' },
-      { date:'01/02/2026', type:'Analyse', title:'Bilan toxicologique', doctor:'Dr. Friedlander', notes:'Traces de substances. Orientation vers programme de suivi.', badge:'b-purple' },
-    ]},
-    'SA-3001': { blood:'B+', allergies:'Aucune connue', height:'180 cm', weight:'76 kg', emergency:'Non renseigné', conditions:'Aucune', history:[] },
-  },
-  // Temp patient files (no citizen account)
-  tempPatients: [
-    { id:'TEMP-001', name:'John Doe', desc:'Homme ~30 ans, trouvé inconscient Vinewood Blvd', created:'09/03/2026', createdBy:'Dr. Martinez', history:[
-      { date:'09/03/2026', type:'Urgence', title:'Inconscient — possible overdose', doctor:'Dr. Martinez', notes:'Naloxone administrée. Stabilisé. Transféré en observation.', badge:'b-red' },
-    ]},
-  ],
-
-  // CITIZENS REGISTRY — shared between gov and patrons
-  citizens: [
-    { id:'SA-1001', name:'Marcus Holloway', phone:'555-0142', pass:'pass', registered:'12/01/2025', job:'Downtown Cab Co.', role:'Patron' },
-    { id:'SA-1002', name:'Lamar Davis', phone:'555-0387', pass:'pass', registered:'03/06/2025', job:'Downtown Cab Co.', role:'Chauffeur Senior' },
-    { id:'SA-1003', name:'Amanda De Santa', phone:'555-0219', pass:'pass', registered:'15/09/2025', job:'Downtown Cab Co.', role:'Chauffeur' },
-    { id:'SA-1004', name:'Tracey De Santa', phone:'555-0633', pass:'pass', registered:'20/11/2025', job:'Downtown Cab Co.', role:'Chauffeur' },
-    { id:'SA-1005', name:'Jimmy De Santa', phone:'555-0501', pass:'pass', registered:'01/02/2026', job:'Downtown Cab Co.', role:'Apprenti' },
-    { id:'SA-2001', name:'Dr. Friedlander', phone:'555-0600', pass:'pass', registered:'01/06/2024', job:'EMS Los Santos', role:'Patron' },
-    { id:'SA-2002', name:'Chef Bobby', phone:'555-0710', pass:'pass', registered:'15/03/2025', job:'Burger Shot', role:'Patron' },
-    { id:'SA-2003', name:'Hao', phone:'555-0820', pass:'pass', registered:'20/09/2024', job:'Los Santos Customs', role:'Patron' },
-    { id:'SA-2004', name:'Trevor Philips', phone:'555-0191', pass:'pass', registered:'01/01/2025', job:'Vanilla Unicorn', role:'Patron' },
-    { id:'SA-3001', name:'Tommy Vercetti', phone:'555-0777', pass:'pass', registered:'05/03/2026', job:null, role:null },
-    { id:'SA-3002', name:'Niko Bellic', phone:'555-0888', pass:'pass', registered:'06/03/2026', job:null, role:null },
-    { id:'SA-3003', name:'Claude Speed', phone:'555-0999', pass:'pass', registered:'07/03/2026', job:null, role:null },
-    { id:'SA-3004', name:'Toni Cipriani', phone:'555-0444', pass:'pass', registered:'08/03/2026', job:null, role:null },
-    { id:'SA-3005', name:'Victor Vance', phone:'555-0333', pass:'pass', registered:'09/03/2026', job:null, role:null },
-  ],
-  // CITIZEN SALARY RECORDS — persists even after firing
-  citizenSalaries: {
-    'SA-1001': [
-      { week:'Sem. 10 (03-09 mars)', company:'Downtown Cab Co.', icon:'🚕', grade:'Patron', invoiced:4200, fixe:3000, commission:840, prime:500, total:4340, date:'09/03/2026' },
-      { week:'Sem. 9 (24 fév-02 mars)', company:'Downtown Cab Co.', icon:'🚕', grade:'Patron', invoiced:3800, fixe:3000, commission:760, prime:500, total:4260, date:'02/03/2026' },
-      { week:'Sem. 8 (17-23 fév)', company:'Downtown Cab Co.', icon:'🚕', grade:'Patron', invoiced:4500, fixe:3000, commission:900, prime:500, total:4400, date:'23/02/2026' },
-      { week:'Sem. 7 (10-16 fév)', company:'Downtown Cab Co.', icon:'🚕', grade:'Patron', invoiced:3600, fixe:3000, commission:720, prime:500, total:4220, date:'16/02/2026' },
-      { week:'Sem. 6 (03-09 fév)', company:'Downtown Cab Co.', icon:'🚕', grade:'Patron', invoiced:4100, fixe:3000, commission:820, prime:500, total:4320, date:'09/02/2026' },
-    ],
-    'SA-1002': [
-      { week:'Sem. 10 (03-09 mars)', company:'Downtown Cab Co.', icon:'🚕', grade:'Chauffeur Senior', invoiced:3100, fixe:0, commission:465, prime:200, total:665, date:'09/03/2026' },
-      { week:'Sem. 9 (24 fév-02 mars)', company:'Downtown Cab Co.', icon:'🚕', grade:'Chauffeur Senior', invoiced:2900, fixe:0, commission:435, prime:200, total:635, date:'02/03/2026' },
-      { week:'Sem. 8 (17-23 fév)', company:'Downtown Cab Co.', icon:'🚕', grade:'Chauffeur Senior', invoiced:3200, fixe:0, commission:480, prime:200, total:680, date:'23/02/2026' },
-    ],
-    'SA-1003': [
-      { week:'Sem. 10 (03-09 mars)', company:'Downtown Cab Co.', icon:'🚕', grade:'Chauffeur', invoiced:2200, fixe:0, commission:264, prime:0, total:264, date:'09/03/2026' },
-      { week:'Sem. 9 (24 fév-02 mars)', company:'Downtown Cab Co.', icon:'🚕', grade:'Chauffeur', invoiced:1950, fixe:0, commission:234, prime:0, total:234, date:'02/03/2026' },
-    ],
-  },
-
-  messages: [
-    { id:1, from:'Downtown Cab Co.', icon:'🚕', subject:'Votre candidature a été acceptée !', body:'Félicitations ! Votre candidature au poste de Chauffeur a été retenue.\n\nVous êtes attendu dès lundi pour votre prise de poste. Présentez-vous au dépôt de Davis Avenue à 8h.\n\nBienvenue dans l\'équipe !', date:'09/03/2026', read:false },
-    { id:2, from:'État de San Andreas', icon:'🏛️', subject:'Nouvelle loi soumise au vote citoyen', body:'Une nouvelle proposition de loi est ouverte au vote :\n\n« Légalisation du cannabis récréatif »\n\nRendez-vous dans l\'espace Votes pour exprimer votre choix.\n\nLe scrutin ferme le 31/03/2026.', date:'08/03/2026', read:false },
-    { id:3, from:'EMS Los Santos', icon:'🏥', subject:'Résultats de votre analyse sanguine', body:'Vos résultats d\'analyse du 25/02 sont disponibles dans votre carnet de santé.\n\nAucune anomalie détectée. Prochain rendez-vous recommandé dans 6 mois.', date:'05/03/2026', read:true },
-    { id:4, from:'Burger Shot', icon:'🍔', subject:'Offre spéciale — Menu Heart Stopper à $99', body:'Profitez de notre nouveau menu à prix réduit !\n\nDouble steak, bacon fumé, sauce secrète + Sprunk offert.\n\nOffre valable jusqu\'à dimanche.', date:'03/03/2026', read:true },
-    { id:5, from:'LSPD', icon:'🚔', subject:'Contravention #LS-78432', body:'Vous avez été verbalisé pour excès de vitesse le 28/02/2026 à 15h12 sur l\'autoroute de Vinewood.\n\nMontant: $800\nDélai de paiement: 15 jours\n\nEn cas de contestation, présentez-vous au tribunal de LS.', date:'01/03/2026', read:true },
-  ],
-
-  laws: [
-    { id:1, title:'Légalisation du cannabis récréatif', desc:'Autoriser la vente et la consommation encadrée de cannabis pour les adultes de plus de 21 ans.', pour:67, contre:33, total:423, status:'open', deadline:'31/03/2026' },
-    { id:2, title:'Augmentation du budget LSPD (+30%)', desc:'Augmenter le budget de la police pour le recrutement et l\'équipement, financé par une hausse des amendes.', pour:42, contre:58, total:289, status:'open', deadline:'15/04/2026' },
-    { id:3, title:'Couvre-feu 23h dans les zones sensibles', desc:'Instaurer un couvre-feu permanent de 23h à 6h dans les quartiers de Davis et Strawberry.', pour:35, contre:65, total:612, status:'open', deadline:'20/04/2026' },
-    { id:4, title:'Réduction de la TVA à 3%', desc:'Baisser la TVA de 5% à 3% pour stimuler la consommation et soutenir les commerces locaux.', pour:89, contre:11, total:567, status:'closed', deadline:'15/02/2026' },
-  ],
-
-  jobs: [
-    { id:1, company:'Downtown Cab Co.', icon:'🚕', role:'Chauffeur', salary:'15% / course', desc:'Courses en ville et aéroport. Permis valide obligatoire.', slots:3 },
-    { id:2, company:'EMS Los Santos', icon:'🏥', role:'Ambulancier', salary:'$2,000/sem', desc:'Gardes de 12h. Formation assurée sur 2 semaines.', slots:2 },
-    { id:3, company:'Burger Shot', icon:'🍔', role:'Équipier', salary:'10% / vente', desc:'Service comptoir, préparation commandes. Première expérience OK.', slots:4 },
-    { id:4, company:'Los Santos Customs', icon:'🔧', role:'Mécanicien', salary:'12% / prestation', desc:'Réparations, peinture, tuning. Connaissance auto requise.', slots:1 },
-    { id:5, company:'Burger Shot', icon:'🍔', role:'Manager', salary:'$2,500/sem + 5%', desc:'Gestion d\'équipe et planning. 2 ans d\'expérience min.', slots:1 },
-  ],
-
-  // WORK DATA — null = pas embauché
+  healthRecords: {},
+  tempPatients: [],
+  citizens: [],
+  citizenSalaries: {},
+  messages: [],
+  laws: [],
+  jobs: [],
   job: null,
-
-  // GOV DATA
   govUser: null,
   defcon: 5,
-  govTaxDeclarations: [
-    { id:1, company:'Downtown Cab Co.', icon:'🚕', period:'Q4 2025', ca:98000, expenses:42000, net:56000, taxDue:6800, tva:4900, date:'15/01/2026', status:'paid' },
-    { id:2, company:'Burger Shot', icon:'🍔', period:'Q4 2025', ca:72000, expenses:28000, net:44000, taxDue:3400, tva:3600, date:'18/01/2026', status:'paid' },
-    { id:3, company:'EMS Los Santos', icon:'🏥', period:'Q4 2025', ca:156000, expenses:98000, net:58000, taxDue:5600, tva:7800, date:'20/01/2026', status:'pending' },
-  ],
-  // STATE BUDGET
-  govBudget: {
-    balance: 847200,
-    income: [
-      { id:1, type:'Impôts entreprises', amount:485600, date:'Q4 2025', desc:'Impôt progressif — 4 entreprises' },
-      { id:2, type:'TVA collectée', amount:312400, date:'Q4 2025', desc:'TVA 5% sur toutes les transactions' },
-      { id:3, type:'Amendes', amount:49200, date:'Q4 2025', desc:'Contraventions LSPD + tribunal' },
-    ],
-    expenses: [
-      { id:1, type:'Subvention', amount:80000, date:'15/02/2026', desc:'EMS — Renouvellement ambulances', beneficiary:'EMS Los Santos' },
-      { id:2, type:'Subvention', amount:40000, date:'En cours', desc:'Cab Co. — Électrification flotte', beneficiary:'Downtown Cab Co.' },
-      { id:3, type:'Salaires fonctionnaires', amount:25000, date:'01/03/2026', desc:'Agents administratifs + gouverneur' },
-      { id:4, type:'Infrastructure', amount:15000, date:'05/03/2026', desc:'Réparation route Vinewood Blvd' },
-      { id:5, type:'Sécurité', amount:35000, date:'01/03/2026', desc:'Équipement LSPD — gilets + radios' },
-    ],
-    investments: [
-      { id:1, name:'Clinique Paleto Bay', budget:500000, spent:0, status:'planned', desc:'Construction clinique médicale au nord' },
-      { id:2, name:'Ligne Bus Nord', budget:200000, spent:45000, status:'active', desc:'Transport public Paleto Bay — LS' },
-      { id:3, name:'Rénovation Del Perro Pier', budget:150000, spent:150000, status:'done', desc:'Mise aux normes sécurité + éclairage' },
-    ],
-  },
+  govTaxDeclarations: [],
+  govBudget: { balance: 0, income: [], expenses: [], investments: [] },
   taxConfig: { tva: 5, tranches: [{min:0,max:10000,rate:0},{min:10001,max:50000,rate:10},{min:50001,max:150000,rate:20},{min:150001,max:999999,rate:30}] },
-  enterprises: [
-    { id:'ENT-001', name:'Downtown Cab Co.', icon:'🚕', type:'Transport', patron:'Marcus Holloway', patronId:'SA-1001', status:'active', created:'12/01/2025', employees:5 },
-    { id:'ENT-002', name:'EMS Los Santos', icon:'🏥', type:'Santé', patron:'Dr. Friedlander', patronId:'SA-2001', status:'active', created:'01/06/2024', employees:8 },
-    { id:'ENT-003', name:'Burger Shot', icon:'🍔', type:'Restauration', patron:'Chef Bobby', patronId:'SA-2002', status:'active', created:'15/03/2025', employees:6 },
-    { id:'ENT-004', name:'Los Santos Customs', icon:'🔧', type:'Mécanique', patron:'Hao', patronId:'SA-2003', status:'active', created:'20/09/2024', employees:4 },
-    { id:'ENT-005', name:'Vanilla Unicorn', icon:'🎭', type:'Divertissement', patron:'Trevor Philips', patronId:'SA-2004', status:'suspended', created:'01/01/2025', employees:3 },
-  ],
-  decrees: [
-    { id:1, code:'DEC-2026-14', title:'Réglementation des armes à feu', body:'Le port d\'armes catégorie B est soumis à un permis spécial LSPD.', date:'08/03/2026', author:'Bureau du Gouverneur' },
-    { id:2, code:'DEC-2026-13', title:'Budget santé publique +$500K', body:'Investissement dans les infrastructures EMS : 2 ambulances et équipement.', date:'01/03/2026', author:'Bureau du Gouverneur' },
-    { id:3, code:'DEC-2026-12', title:'Interdiction courses sauvages', body:'Courses non autorisées : amende $5,000 + confiscation véhicule.', date:'20/02/2026', author:'Assemblée de SA' },
-  ],
-  vault: [
-    { id:1, name:'Budget Prévisionnel 2026', type:'pdf', classification:'Confidentiel', date:'01/01/2026', size:'2.4 MB' },
-    { id:2, name:'Liste Agents Sous Couverture', type:'xlsx', classification:'Secret Défense', date:'15/02/2026', size:'340 KB' },
-    { id:3, name:'Accord Commercial Blaine County', type:'pdf', classification:'Restreint', date:'10/03/2026', size:'1.1 MB' },
-    { id:4, name:'Plan Évacuation DEFCON 1', type:'pdf', classification:'Secret Défense', date:'05/01/2026', size:'5.7 MB' },
-    { id:5, name:'Comptes Offshore — Audit', type:'xlsx', classification:'Confidentiel', date:'28/02/2026', size:'890 KB' },
-  ],
-  defconLog: [
-    { date:'08/03 14:00', from:4, to:5, reason:'Fin opération Davis', author:'Gouverneur' },
-    { date:'06/03 22:00', from:5, to:4, reason:'Opération anti-drogue', author:'LSPD' },
-    { date:'01/03 08:00', from:3, to:5, reason:'Retour au calme', author:'Gouverneur' },
-  ],
+  enterprises: [],
+  decrees: [],
+  vault: [],
+  defconLog: [],
 
   // LEGAL CODES
   legalCodes: [
@@ -596,76 +467,10 @@ const DB = {
 
 // ==================== SHARED ENTERPRISE DATA ====================
 function initAllJobs() {
-  [['SA-2010','Dr. Kim','555-0610'],['SA-2011','Dr. Martinez','555-0620'],['SA-2012','Sarah Mitchell','555-0630'],['SA-2013','Jake Williams','555-0640'],['SA-2014','Emma Thompson','555-0650']].forEach(([id,name,phone]) => {
-    if (!DB.citizens.find(c=>c.id===id)) DB.citizens.push({id,name,phone,pass:'pass',registered:'01/01/2025',job:'EMS Los Santos',role:'Employé'});
-  });
-  DB.allJobs = {
-    'Downtown Cab Co.': {
-      company:'Downtown Cab Co.', icon:'🚕',
-      grades:[
-        {name:'Patron',payType:'both',fixe:3000,commission:20,prime:500,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
-        {name:'Gérant',payType:'both',fixe:2000,commission:18,prime:300,canManage:true,canHire:true,canFire:false,canEditGrades:false,canStock:true,canArticles:true,canPOS:true,canPatients:false},
-        {name:'Chauffeur Senior',payType:'commission',fixe:0,commission:15,prime:200,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:false},
-        {name:'Chauffeur',payType:'commission',fixe:0,commission:12,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
-        {name:'Apprenti',payType:'fixe',fixe:800,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:false,canPatients:false},
-      ],
-      employees:[
-        {id:'SA-1001',name:'Marcus Holloway',grade:0,phone:'555-0142',hired:'12/01/25',status:'active'},
-        {id:'SA-1002',name:'Lamar Davis',grade:2,phone:'555-0387',hired:'03/06/25',status:'active'},
-        {id:'SA-1003',name:'Amanda De Santa',grade:3,phone:'555-0219',hired:'15/09/25',status:'active'},
-        {id:'SA-1004',name:'Tracey De Santa',grade:3,phone:'555-0633',hired:'20/11/25',status:'active'},
-        {id:'SA-1005',name:'Jimmy De Santa',grade:4,phone:'555-0501',hired:'01/02/26',status:'active'},
-      ],
-      pos:[{name:'Course Courte',price:150,emoji:'🚖'},{name:'Course Longue',price:350,emoji:'🛣️'},{name:'Aéroport',price:500,emoji:'✈️'},{name:'VIP',price:800,emoji:'🌟'},{name:'Attente /min',price:20,emoji:'⏱️'},{name:'Pourboire',price:50,emoji:'💰'}],
-      invoices:[{id:1,employee:'SA-1003',employeeName:'Amanda De Santa',items:['Course Longue','Pourboire'],total:400,tva:20,date:'10/03/2026',time:'14:32'},{id:2,employee:'SA-1002',employeeName:'Lamar Davis',items:['VIP'],total:800,tva:40,date:'10/03/2026',time:'13:15'},{id:3,employee:'SA-1001',employeeName:'Marcus Holloway',items:['VIP','VIP'],total:1600,tva:80,date:'08/03/2026',time:'18:40'}],
-      weeklyHistory:[{week:'Sem. 10 (03-09 mars)',data:{'SA-1001':{invoiced:4200,count:8},'SA-1002':{invoiced:3100,count:12},'SA-1003':{invoiced:2200,count:9},'SA-1004':{invoiced:1800,count:7},'SA-1005':{invoiced:400,count:3}}},{week:'Sem. 9 (24 fév-02 mars)',data:{'SA-1001':{invoiced:3800,count:7},'SA-1002':{invoiced:2900,count:10},'SA-1003':{invoiced:1950,count:8},'SA-1004':{invoiced:1600,count:6},'SA-1005':{invoiced:350,count:2}}}],
-      pendingApps:[{id:'SA-3001',name:'Tommy Vercetti',phone:'555-0777',message:'5 ans de conduite.',date:'09/03/2026'}],
-      employeeExpenses:[{id:1,empId:'SA-1002',empName:'Lamar Davis',type:'Essence',amount:85,desc:'Plein véhicule #12',date:'10/03/2026',status:'approved'},{id:2,empId:'SA-1003',empName:'Amanda De Santa',type:'Essence',amount:72,desc:'Plein véhicule #8',date:'09/03/2026',status:'pending'}],
-      companyExpenses:[{id:1,type:'Loyer',amount:5000,desc:'Local Davis Avenue',date:'01/03/2026',recurring:true},{id:2,type:'Assurance flotte',amount:3200,desc:'5 véhicules assurés',date:'01/03/2026',recurring:true},{id:3,type:'Réparation',amount:1800,desc:'Véhicule #12',date:'07/03/2026',recurring:false}],
-      taxDeclarations:[{id:1,period:'Q4 2025',ca:98000,expenses:42000,taxDue:6800,date:'15/01/2026',status:'paid'}],
-      stock:[{id:1,name:'Essence Premium',qty:340,unit:'L',min:100,cat:'Carburant',emoji:'⛽',notes:'Shell Davis'},{id:2,name:'Huile moteur',qty:45,unit:'L',min:20,cat:'Mécanique',emoji:'🛢️',notes:'Castrol 5W-40'},{id:3,name:'Pneus',qty:8,unit:'pcs',min:10,cat:'Mécanique',emoji:'🛞',notes:'Stock critique'},{id:4,name:'Kit secours',qty:12,unit:'pcs',min:5,cat:'Sécurité',emoji:'🩹',notes:''},{id:5,name:'GPS',qty:4,unit:'pcs',min:3,cat:'Équipement',emoji:'📡',notes:'Garmin Drive 52'}],
-      internalMessages:[{id:1,from:'SA-1001',fromName:'Marcus Holloway',to:'all',subject:'Réunion lundi 8h',body:'Réunion obligatoire lundi à 8h.',date:'10/03/2026',time:'09:15'},{id:2,from:'SA-1002',fromName:'Lamar Davis',to:'SA-1001',toName:'Marcus Holloway',subject:'Véhicule #12 en panne',body:'Boss, le #12 a un souci moteur.',date:'09/03/2026',time:'16:45'}],
-      hrRecords:[{id:1,empId:'SA-1002',empName:'Lamar Davis',type:'prime',amount:300,reason:'Meilleur chauffeur du mois',date:'01/03/2026',by:'Marcus Holloway'},{id:2,empId:'SA-1005',empName:'Jimmy De Santa',type:'blame',amount:0,reason:'Retard répété',date:'07/03/2026',by:'Marcus Holloway'}],
-    },
-    'EMS Los Santos': {
-      company:'EMS Los Santos', icon:'🏥',
-      grades:[
-        {name:'Directeur Médical',payType:'both',fixe:4000,commission:10,prime:800,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:true},
-        {name:'Chef de Service',payType:'both',fixe:2800,commission:8,prime:400,canManage:true,canHire:true,canFire:false,canEditGrades:false,canStock:true,canArticles:true,canPOS:true,canPatients:true},
-        {name:'Médecin',payType:'both',fixe:2200,commission:5,prime:200,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:true},
-        {name:'Ambulancier',payType:'fixe',fixe:1800,commission:0,prime:100,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:true},
-        {name:'Stagiaire',payType:'fixe',fixe:900,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:false,canPatients:false},
-      ],
-      employees:[
-        {id:'SA-2001',name:'Dr. Friedlander',grade:0,phone:'555-0600',hired:'01/06/24',status:'active'},
-        {id:'SA-2010',name:'Dr. Kim',grade:1,phone:'555-0610',hired:'15/08/24',status:'active'},
-        {id:'SA-2011',name:'Dr. Martinez',grade:2,phone:'555-0620',hired:'10/01/25',status:'active'},
-        {id:'SA-2012',name:'Sarah Mitchell',grade:3,phone:'555-0630',hired:'20/03/25',status:'active'},
-        {id:'SA-2013',name:'Jake Williams',grade:3,phone:'555-0640',hired:'05/07/25',status:'active'},
-        {id:'SA-2014',name:'Emma Thompson',grade:4,phone:'555-0650',hired:'01/02/26',status:'active'},
-      ],
-      pos:[{name:'Consultation',price:200,emoji:'🩺'},{name:'Soins légers',price:350,emoji:'🩹'},{name:'Soins lourds',price:800,emoji:'💉'},{name:'Opération mineure',price:1500,emoji:'🏥'},{name:'Opération majeure',price:5000,emoji:'⚕️'},{name:'Transport ambulance',price:400,emoji:'🚑'},{name:'Médicaments',price:120,emoji:'💊'},{name:'Analyse sanguine',price:250,emoji:'🧪'},{name:'Radiographie',price:350,emoji:'📷'},{name:'IRM / Scanner',price:1200,emoji:'🧠'},{name:'Plâtre / Attelle',price:300,emoji:'🦴'},{name:'Suture',price:200,emoji:'🪡'}],
-      invoices:[{id:1,employee:'SA-2011',employeeName:'Dr. Martinez',items:['Consultation','Médicaments'],total:320,tva:16,date:'10/03/2026',time:'10:15'},{id:2,employee:'SA-2012',employeeName:'Sarah Mitchell',items:['Transport ambulance','Soins légers'],total:750,tva:38,date:'10/03/2026',time:'08:40'},{id:3,employee:'SA-2001',employeeName:'Dr. Friedlander',items:['Opération majeure'],total:5000,tva:250,date:'08/03/2026',time:'09:00'}],
-      weeklyHistory:[{week:'Sem. 10 (03-09 mars)',data:{'SA-2001':{invoiced:12500,count:6},'SA-2010':{invoiced:8200,count:12},'SA-2011':{invoiced:6800,count:15},'SA-2012':{invoiced:4200,count:10},'SA-2013':{invoiced:3800,count:9},'SA-2014':{invoiced:800,count:3}}},{week:'Sem. 9 (24 fév-02 mars)',data:{'SA-2001':{invoiced:10800,count:5},'SA-2010':{invoiced:7500,count:10},'SA-2011':{invoiced:5900,count:12},'SA-2012':{invoiced:3600,count:8},'SA-2013':{invoiced:3200,count:7},'SA-2014':{invoiced:600,count:2}}}],
-      pendingApps:[{id:'SA-3003',name:'Claude Speed',phone:'555-0999',message:'Formation secourisme.',date:'08/03/2026'},{id:'SA-3004',name:'Toni Cipriani',phone:'555-0444',message:'Ex-pompier.',date:'07/03/2026'}],
-      employeeExpenses:[{id:1,empId:'SA-2012',empName:'Sarah Mitchell',type:'Essence',amount:95,desc:'Plein ambulance #3',date:'10/03/2026',status:'approved'},{id:2,empId:'SA-2011',empName:'Dr. Martinez',type:'Équipement',amount:280,desc:'Stéthoscope Littmann',date:'08/03/2026',status:'pending'}],
-      companyExpenses:[{id:1,type:'Loyer',amount:8000,desc:'Clinique Pillbox Hill',date:'01/03/2026',recurring:true},{id:2,type:'Assurance',amount:5500,desc:'RC Pro + Ambulances',date:'01/03/2026',recurring:true},{id:3,type:'Fournisseur médical',amount:4200,desc:'Commande MedSupply',date:'02/03/2026',recurring:true}],
-      taxDeclarations:[{id:1,period:'Q4 2025',ca:156000,expenses:98000,taxDue:8600,date:'20/01/2026',status:'paid'}],
-      stock:[{id:1,name:'Bandages stériles',qty:200,unit:'pcs',min:50,cat:'Soins',emoji:'🩹',notes:''},{id:2,name:'Morphine (doses)',qty:15,unit:'doses',min:20,cat:'Médicaments',emoji:'💉',notes:'⚠️ Stockage réfrigéré'},{id:3,name:'Poches de sang O-',qty:8,unit:'pcs',min:15,cat:'Urgence',emoji:'🩸',notes:'Péremption 42 jours'},{id:4,name:'Seringues',qty:150,unit:'pcs',min:50,cat:'Soins',emoji:'💉',notes:''},{id:5,name:'Attelles',qty:25,unit:'pcs',min:10,cat:'Immobilisation',emoji:'🦴',notes:'S/M/L'},{id:6,name:'Défibrillateur (batt.)',qty:6,unit:'pcs',min:4,cat:'Équipement',emoji:'⚡',notes:'Vérifier charge'},{id:7,name:'Gants stériles',qty:40,unit:'boîtes',min:15,cat:'Hygiène',emoji:'🧤',notes:'Latex free'},{id:8,name:'Adrénaline',qty:10,unit:'doses',min:8,cat:'Médicaments',emoji:'💊',notes:'⚠️ Urgence uniquement'},{id:9,name:'Masques FFP2',qty:300,unit:'pcs',min:100,cat:'Hygiène',emoji:'😷',notes:''}],
-      internalMessages:[{id:1,from:'SA-2001',fromName:'Dr. Friedlander',to:'all',subject:'Protocole COVID mis à jour',body:'Masque FFP2 obligatoire pour interventions respiratoires.',date:'10/03/2026',time:'08:00'},{id:2,from:'SA-2010',fromName:'Dr. Kim',to:'all',subject:'Planning gardes — Semaine 11',body:'Lundi: Martinez + Mitchell\nMardi: Williams + Thompson\nMerci de confirmer.',date:'09/03/2026',time:'17:00'}],
-      hrRecords:[{id:1,empId:'SA-2011',empName:'Dr. Martinez',type:'prime',amount:500,reason:'15 opérations réussies',date:'01/03/2026',by:'Dr. Friedlander'},{id:2,empId:'SA-2014',empName:'Emma Thompson',type:'warning',amount:0,reason:'Oubli rapport intervention',date:'08/03/2026',by:'Dr. Kim'}],
-    },
-  };
-  // Ensure ALL enterprises in DB.enterprises have an allJobs entry
-  DB.enterprises.forEach(ent => {
-    if (!DB.allJobs[ent.name]) {
-      createEnterpriseData(ent.name, ent.icon);
-      // Add patron as employee if they exist
-      const patron = DB.citizens.find(c => c.id === ent.patronId);
-      if (patron) {
-        DB.allJobs[ent.name].employees.push({id:patron.id, name:patron.name, grade:0, phone:patron.phone||'', hired:ent.created||new Date().toLocaleDateString('fr-FR'), status:'active'});
-      }
-    }
+  DB.allJobs = {};
+  // Ensure all registered enterprises have job data
+  DB.enterprises.forEach(function(ent) {
+    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon);
   });
 }
 
