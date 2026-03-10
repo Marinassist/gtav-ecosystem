@@ -320,8 +320,6 @@ function updateSyncBadge(state) {
   // Auto-hide after 3s
   clearTimeout(el._t); el._t = setTimeout(() => { el.textContent = ''; }, 3000);
 }
-}
-}
 
 async function loadFromSupabase() {
   try {
