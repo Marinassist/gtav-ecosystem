@@ -186,6 +186,7 @@ tr:hover td{background:rgba(240,180,41,.02)}
           Démo EMS: <strong style="color:var(--t2)">SA-2001</strong> / <strong style="color:var(--t2)">pass</strong>
         </div>
         <div style="text-align:center;margin-top:.5rem"><button class="btn btn-sm btn-outline" style="font-size:.65rem;padding:.2rem .5rem;opacity:.5" onclick="resetAllData()">🔄 Réinitialiser toutes les données</button></div>
+        <div id="connStatus" style="text-align:center;margin-top:.5rem;font-size:.65rem;color:var(--t3)">⏳ Connexion à Supabase...</div>
       </div>
       <!-- INSCRIPTION -->
       <div id="citizenRegister" style="display:none">
@@ -265,11 +266,10 @@ let _saveQueued = false;
 let _remoteSync = false; // true when receiving realtime update — prevents re-saving
 
 function saveDB() {
-  if (_remoteSync) return; // Don't save when receiving remote updates
-  // Fire-and-forget async save to Supabase
+  if (_remoteSync) return;
   if (_saving) { _saveQueued = true; return; }
   _saving = true;
-  const data = {
+  const payload = {
     citizens: DB.citizens,
     allJobs: DB.allJobs,
     enterprises: DB.enterprises,
@@ -289,26 +289,52 @@ function saveDB() {
     jobs: DB.jobs,
     voted: DB.voted,
   };
-  sb.from('shared_state').update({ data: data, updated_at: new Date().toISOString(), updated_by: DB.user?.id || 'anon' }).eq('id', 1)
-    .then(() => {
+  sb.from('shared_state').upsert({ id: 1, data: payload, updated_at: new Date().toISOString(), updated_by: DB.user?.id || 'anon' })
+    .then(({ error }) => {
       _saving = false;
+      if (error) {
+        console.error('💾 Save error:', error.message);
+        // Fallback: save to localStorage
+        try { localStorage.setItem('sa_backup', JSON.stringify(payload)); } catch(e) {}
+      }
       if (_saveQueued) { _saveQueued = false; saveDB(); }
     })
-    .catch(e => { console.warn('Save failed:', e); _saving = false; });
+    .catch(e => { console.error('💾 Save crash:', e); _saving = false; });
+}
 }
 
 async function loadFromSupabase() {
   try {
     const { data, error } = await sb.from('shared_state').select('data').eq('id', 1).single();
-    if (error) throw error;
+    if (error) {
+      console.error('📥 Load error:', error.message, error.details);
+      // If table doesn't exist, try to create it
+      if (error.code === '42P01' || error.message.includes('does not exist')) {
+        console.log('📥 Table shared_state manquante — initialisation...');
+        const { error: insertErr } = await sb.from('shared_state').insert({ id: 1, data: {} });
+        if (insertErr) console.error('📥 Cannot create row:', insertErr.message);
+        return false;
+      }
+      // Fallback to localStorage backup
+      const backup = localStorage.getItem('sa_backup');
+      if (backup) {
+        const d = JSON.parse(backup);
+        Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
+        console.log('📥 Loaded from localStorage backup');
+        return true;
+      }
+      return false;
+    }
     if (data && data.data && Object.keys(data.data).length > 0) {
       const d = data.data;
       Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
+      console.log('📥 Loaded from Supabase ✅');
       return true;
     }
+    console.log('📥 Supabase empty — first load');
     return false;
   } catch(e) {
-    console.warn('Load from Supabase failed:', e);
+    console.error('📥 Load crash:', e);
     return false;
   }
 }
@@ -610,6 +636,17 @@ function initAllJobs() {
       hrRecords:[{id:1,empId:'SA-2011',empName:'Dr. Martinez',type:'prime',amount:500,reason:'15 opérations réussies',date:'01/03/2026',by:'Dr. Friedlander'},{id:2,empId:'SA-2014',empName:'Emma Thompson',type:'warning',amount:0,reason:'Oubli rapport intervention',date:'08/03/2026',by:'Dr. Kim'}],
     },
   };
+  // Ensure ALL enterprises in DB.enterprises have an allJobs entry
+  DB.enterprises.forEach(ent => {
+    if (!DB.allJobs[ent.name]) {
+      createEnterpriseData(ent.name, ent.icon);
+      // Add patron as employee if they exist
+      const patron = DB.citizens.find(c => c.id === ent.patronId);
+      if (patron) {
+        DB.allJobs[ent.name].employees.push({id:patron.id, name:patron.name, grade:0, phone:patron.phone||'', hired:ent.created||new Date().toLocaleDateString('fr-FR'), status:'active'});
+      }
+    }
+  });
 }
 
 // Dynamic job loader — looks up citizen's job and finds their enterprise data
@@ -617,10 +654,25 @@ function loadJob() {
   const uid = DB.user.id;
   const citizen = DB.citizens.find(c => c.id === uid);
   if (!citizen || !citizen.job) { DB.job = null; return; }
+  // Auto-create allJobs entry if enterprise exists but has no job data
+  if (!DB.allJobs[citizen.job]) {
+    const ent = DB.enterprises.find(e => e.name === citizen.job);
+    if (ent) createEnterpriseData(citizen.job, ent.icon);
+    else { DB.job = null; return; }
+  }
   const jobData = DB.allJobs[citizen.job];
-  if (!jobData) { DB.job = null; return; }
   const emp = jobData.employees.find(e => e.id === uid && e.status === 'active');
-  if (!emp) { DB.job = null; return; }
+  if (!emp) {
+    // Citizen has job set but not in employees — add them (likely patron assigned by gov)
+    if (citizen.role === 'Patron') {
+      jobData.employees.push({id:uid, name:citizen.name, grade:0, phone:citizen.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
+      DB.job = jobData;
+      DB.job.role = 'Patron';
+      DB.job.gradeIndex = 0;
+      return;
+    }
+    DB.job = null; return;
+  }
   DB.job = jobData;
   DB.job.role = citizen.role || jobData.grades[emp.grade]?.name || 'Employé';
   DB.job.gradeIndex = emp.grade;
@@ -2430,7 +2482,32 @@ function modalAssignPatron(citizenId) {
   modal(`<div class="modal-t">👔 Nommer ${c.name} comme Patron</div>
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">Citoyen: <strong>${c.name}</strong> <span class="mono" style="color:var(--t3)">${c.id}</span></div>
     <div class="fg"><label>Entreprise</label><select id="apEnt">${entOpts}</select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const ei=parseInt(document.getElementById('apEnt').value);const ent=DB.enterprises[ei];ent.patron='${c.name}';ent.patronId='${c.id}';const ct=DB.citizens.find(x=>x.id==='${c.id}');ct.job=ent.name;ct.role='Patron';closeModal();toast('${c.name} nommé Patron de '+ent.name);goGov('gcit')">Confirmer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAssignPatron('${c.id}','${c.name}','${c.phone||''}')">Confirmer</button></div>`);
+}
+function doAssignPatron(citizenId, citizenName, citizenPhone) {
+  const ei = parseInt(document.getElementById('apEnt').value);
+  const ent = DB.enterprises[ei];
+  // Remove old patron
+  const oldCit = DB.citizens.find(x=>x.id===ent.patronId);
+  if (oldCit && oldCit.role==='Patron' && oldCit.id !== citizenId) { oldCit.job = null; oldCit.role = null; }
+  // Set enterprise patron
+  ent.patron = citizenName;
+  ent.patronId = citizenId;
+  // Update citizen
+  const ct = DB.citizens.find(x=>x.id===citizenId);
+  ct.job = ent.name; ct.role = 'Patron';
+  // Ensure allJobs data exists for this enterprise
+  if (!DB.allJobs[ent.name]) {
+    createEnterpriseData(ent.name, ent.icon);
+  }
+  // Add patron as grade 0 employee if not already there
+  const jobData = DB.allJobs[ent.name];
+  const existing = jobData.employees.find(e=>e.id===citizenId);
+  if (existing) { existing.grade = 0; existing.status = 'active'; }
+  else { jobData.employees.push({id:citizenId, name:citizenName, grade:0, phone:citizenPhone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
+  closeModal();
+  toast(citizenName + ' nommé Patron de ' + ent.name);
+  goGov('gcit');
 }
 function modalResetPass(citizenId) {
   const c = DB.citizens.find(x=>x.id===citizenId);
@@ -2840,31 +2917,50 @@ function gVotes() {
 
 // ============ INIT ============
 (async function() {
-  // Show loading state
   const authEl = document.getElementById('auth');
+  const statusEl = document.getElementById('connStatus');
   if (authEl) authEl.style.opacity = '0.5';
 
-  // Try loading from Supabase
-  const loaded = await loadFromSupabase();
-  if (!loaded) {
-    // First time ever — initialize demo data and push to Supabase
-    initAllJobs();
-    saveDB();
+  try {
+    // Test connection first
+    const { error } = await sb.from('shared_state').select('id').eq('id', 1).single();
+    if (error) {
+      console.error('❌ Supabase:', error.message);
+      if (error.code === 'PGRST116' || error.message.includes('0 rows')) {
+        await sb.from('shared_state').insert({ id: 1, data: {} });
+        console.log('✅ Row shared_state created');
+      } else if (error.code === '42P01') {
+        if (statusEl) statusEl.innerHTML = '🔴 Table shared_state manquante — exécute le SQL dans Supabase';
+        if (authEl) authEl.style.opacity = '1';
+        return;
+      }
+    }
+
+    // Load data
+    const loaded = await loadFromSupabase();
+    if (!loaded) {
+      initAllJobs();
+      await sb.from('shared_state').upsert({ id: 1, data: {} });
+      saveDB();
+      console.log('🏛️ Données de démo initialisées');
+    }
+
+    setupRealtime();
+
+    const lastId = localStorage.getItem('sa_lastLogin');
+    if (lastId) { const inp = document.getElementById('lId'); if (inp) inp.value = lastId; }
+
+    if (authEl) authEl.style.opacity = '1';
+    if (statusEl) statusEl.innerHTML = loaded
+      ? '🟢 Connecté à Supabase — ' + DB.citizens.length + ' citoyens'
+      : '🟢 Connecté — Données de démo chargées';
+    console.log('🏛️ San Andreas chargé — ' + DB.citizens.length + ' citoyens');
+
+  } catch(e) {
+    console.error('❌ Init error:', e);
+    if (statusEl) statusEl.innerHTML = '🔴 Erreur: ' + e.message;
+    if (authEl) authEl.style.opacity = '1';
   }
-
-  // Setup realtime sync
-  setupRealtime();
-
-  // Restore last login hint
-  const lastId = localStorage.getItem('sa_lastLogin');
-  if (lastId) {
-    const inp = document.getElementById('lId');
-    if (inp) inp.value = lastId;
-  }
-
-  // Ready
-  if (authEl) authEl.style.opacity = '1';
-  console.log('🏛️ San Andreas chargé — ' + DB.citizens.length + ' citoyens, ' + DB.enterprises.length + ' entreprises');
 })();
 </script>
 </body>
