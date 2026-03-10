@@ -158,6 +158,7 @@ tr:hover td{background:rgba(240,180,41,.02)}
 }
 @media(max-width:480px){.stats{grid-template-columns:1fr}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -253,46 +254,102 @@ tr:hover td{background:rgba(240,180,41,.02)}
 </div>
 
 <script>
-// ============ PERSISTENCE ============
-const SAVE_KEY = 'sa_ecosystem';
+// ============ SUPABASE CLIENT ============
+const SUPABASE_URL = 'https://xodqbotgcglsbepglthd.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvZHFib3RnY2dsc2JlcGdsdGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTI1MjgsImV4cCI6MjA4ODcyODUyOH0.aLbZ_sOtSz5Ki8M4QrDg3Fz_aGYuMQf_BODRNL1SgbI';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ============ PERSISTENCE — SUPABASE ============
+let _saving = false;
+let _saveQueued = false;
+let _remoteSync = false; // true when receiving realtime update — prevents re-saving
+
 function saveDB() {
-  try {
-    const data = {
-      citizens: DB.citizens,
-      allJobs: DB.allJobs,
-      enterprises: DB.enterprises,
-      laws: DB.laws,
-      decrees: DB.decrees,
-      defcon: DB.defcon,
-      defconLog: DB.defconLog,
-      legalCodes: DB.legalCodes,
-      healthRecords: DB.healthRecords,
-      citizenSalaries: DB.citizenSalaries,
-      tempPatients: DB.tempPatients,
-      taxConfig: DB.taxConfig,
-      govBudget: DB.govBudget,
-      govTaxDeclarations: DB.govTaxDeclarations,
-      vault: DB.vault,
-      messages: DB.messages,
-      jobs: DB.jobs,
-      voted: DB.voted,
-    };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-  } catch(e) { console.warn('Save failed:', e); }
+  if (_remoteSync) return; // Don't save when receiving remote updates
+  // Fire-and-forget async save to Supabase
+  if (_saving) { _saveQueued = true; return; }
+  _saving = true;
+  const data = {
+    citizens: DB.citizens,
+    allJobs: DB.allJobs,
+    enterprises: DB.enterprises,
+    laws: DB.laws,
+    decrees: DB.decrees,
+    defcon: DB.defcon,
+    defconLog: DB.defconLog,
+    legalCodes: DB.legalCodes,
+    healthRecords: DB.healthRecords,
+    citizenSalaries: DB.citizenSalaries,
+    tempPatients: DB.tempPatients,
+    taxConfig: DB.taxConfig,
+    govBudget: DB.govBudget,
+    govTaxDeclarations: DB.govTaxDeclarations,
+    vault: DB.vault,
+    messages: DB.messages,
+    jobs: DB.jobs,
+    voted: DB.voted,
+  };
+  sb.from('shared_state').update({ data: data, updated_at: new Date().toISOString(), updated_by: DB.user?.id || 'anon' }).eq('id', 1)
+    .then(() => {
+      _saving = false;
+      if (_saveQueued) { _saveQueued = false; saveDB(); }
+    })
+    .catch(e => { console.warn('Save failed:', e); _saving = false; });
 }
-function loadSavedDB() {
+
+async function loadFromSupabase() {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
-    const data = JSON.parse(raw);
-    Object.keys(data).forEach(k => { if (data[k] !== undefined) DB[k] = data[k]; });
-    return true;
-  } catch(e) { console.warn('Load failed:', e); return false; }
+    const { data, error } = await sb.from('shared_state').select('data').eq('id', 1).single();
+    if (error) throw error;
+    if (data && data.data && Object.keys(data.data).length > 0) {
+      const d = data.data;
+      Object.keys(d).forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
+      return true;
+    }
+    return false;
+  } catch(e) {
+    console.warn('Load from Supabase failed:', e);
+    return false;
+  }
 }
+
 function resetAllData() {
-  localStorage.removeItem(SAVE_KEY);
-  localStorage.removeItem('sa_lastLogin');
-  location.reload();
+  sb.from('shared_state').update({ data: {}, updated_at: new Date().toISOString() }).eq('id', 1)
+    .then(() => { localStorage.removeItem('sa_lastLogin'); location.reload(); });
+}
+
+// ============ REALTIME — Sync quand un autre joueur modifie ============
+function setupRealtime() {
+  sb.channel('sync')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, payload => {
+      const d = payload.new.data;
+      // Ne pas écraser si c'est nous qui avons sauvegardé
+      if (payload.new.updated_by === DB.user?.id) return;
+      if (d && Object.keys(d).length > 0) {
+        // Merge les données partagées (pas les données UI locales)
+        const sharedKeys = ['citizens','allJobs','enterprises','laws','decrees','defcon','defconLog','legalCodes','healthRecords','citizenSalaries','tempPatients','taxConfig','govBudget','govTaxDeclarations','vault','messages','jobs','voted'];
+        sharedKeys.forEach(k => { if (d[k] !== undefined) DB[k] = d[k]; });
+        // Re-render la page courante
+        _remoteSync = true;
+        if (DB.user) {
+          loadJob(); // Re-sync le job au cas où on a été embauché/viré
+          buildNav();
+          if (DB.currentPage) {
+            const c = document.getElementById('page');
+            if (c && c.innerHTML) go(DB.currentPage);
+          }
+        }
+        // Gov side too
+        const gPage = document.getElementById('gPage');
+        if (gPage && gPage.innerHTML && DB.govUser) {
+          const govPages = document.querySelectorAll('#gNav .nav-i.on');
+          if (govPages.length) goGov(govPages[0].dataset.p);
+        }
+        _remoteSync = false;
+        console.log('🔄 Sync reçue de:', payload.new.updated_by);
+      }
+    })
+    .subscribe();
 }
 
 // ============ DATA ============
@@ -2782,14 +2839,33 @@ function gVotes() {
 }
 
 // ============ INIT ============
-const loaded = loadSavedDB();
-if (!loaded) { initAllJobs(); saveDB(); }
-// Restore last login ID hint
-const lastId = localStorage.getItem('sa_lastLogin');
-if (lastId) { 
-  const inp = document.getElementById('lId');
-  if (inp) inp.value = lastId;
-}
+(async function() {
+  // Show loading state
+  const authEl = document.getElementById('auth');
+  if (authEl) authEl.style.opacity = '0.5';
+
+  // Try loading from Supabase
+  const loaded = await loadFromSupabase();
+  if (!loaded) {
+    // First time ever — initialize demo data and push to Supabase
+    initAllJobs();
+    saveDB();
+  }
+
+  // Setup realtime sync
+  setupRealtime();
+
+  // Restore last login hint
+  const lastId = localStorage.getItem('sa_lastLogin');
+  if (lastId) {
+    const inp = document.getElementById('lId');
+    if (inp) inp.value = lastId;
+  }
+
+  // Ready
+  if (authEl) authEl.style.opacity = '1';
+  console.log('🏛️ San Andreas chargé — ' + DB.citizens.length + ' citoyens, ' + DB.enterprises.length + ' entreprises');
+})();
 </script>
 </body>
 </html>
