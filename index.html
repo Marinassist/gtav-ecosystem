@@ -1978,7 +1978,7 @@ function pWPatientDetail(id, isTemp) {
   </div>`;
 
   // Profile
-  h += `<div class="card"><div class="card-t" style="justify-content:space-between">👤 Profil Médical ${!isTemp?`<button class="btn btn-sm btn-outline" onclick="modalEditProfile('${id}')">✏️ Modifier</button>`:''}</div>
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">👤 Profil Médical ${!isTemp?`<button class="btn btn-sm btn-outline" onclick="modalEditMedProfile('${id}')">✏️ Modifier</button>`:''}</div>
     <div class="health-profile">
       <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${rec.blood}</strong></div>
       <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${rec.allergies}</strong></div>
@@ -2089,7 +2089,7 @@ function doAddSoin(id, isTemp) {
   closeModal(); toast('Soin enregistré'); go('wpatients');
 }
 
-function modalEditProfile(citizenId) {
+function modalEditMedProfile(citizenId) {
   const rec = DB.healthRecords[citizenId];
   if (!rec) return;
   modal(`<div class="modal-t">✏️ Modifier le Profil Médical</div>
@@ -3440,10 +3440,10 @@ function createVote() {
     } catch(e) {}
   }
 
-  // 3. If still nothing, fresh demo data
+  // 3. If still nothing, initialisation
   if (!loaded) {
     initAllJobs();
-    console.log('🆕 Demo data initialized');
+    console.log('🆕 Données initialisées');
   }
 
   // 4. Save to both (localStorage instant + Supabase background)
