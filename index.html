@@ -382,7 +382,7 @@ function applyRemoteSync(d) {
 // Helper to get page content without navigation side effects
 function getPageContent(p) {
   if (p.startsWith('code_')) { var code = DB.legalCodes.find(function(x){return x.id===p.replace('code_','')}); return code ? pCodeView(code) : ''; }
-  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
+  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
   return R[p] ? R[p]() : '';
 }
 function getGovPageContent(p) {
@@ -608,7 +608,7 @@ function createEnterpriseData(name, icon) {
     ],
     employees:[], pos:[], invoices:[], weeklyHistory:[],
     pendingApps:[], employeeExpenses:[], companyExpenses:[],
-    taxDeclarations:[], stock:[], internalMessages:[], hrRecords:[],
+    taxDeclarations:[], stock:[], internalMessages:[], hrRecords:[], serviceLog:[],
   };
 }
 
@@ -727,7 +727,8 @@ function buildNav() {
     if (myGrade.canManage) {
       items.push({ s:'Gestion Entreprise' });
       items.push({ id:'wteam', ico:'👥', label:'Équipe' });
-      items.push({ id:'whr', ico:'📋', label:'Primes & Sanctions' });
+      items.push({ id:'wservice', ico:'📋', label:'Relevé de Service' });
+      items.push({ id:'whr', ico:'⚖️', label:'Primes & Sanctions' });
       items.push({ id:'wcompta', ico:'📒', label:'Comptabilité' });
       if (myGrade.canArticles) items.push({ id:'warticles', ico:'🏷️', label:'Articles Caisse' });
       items.push({ id:'wgrades', ico:'⚙️', label:'Grades' });
@@ -748,7 +749,7 @@ function go(p) {
   DB.currentPage = p;
   document.querySelectorAll('.nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('page');
-  const T={home:'Mon Espace',salaires:'Mes Salaires',health:'Carnet de Santé',msg:'Messagerie',jobs:'Offres d\'Emploi',vote:'Voter les Lois',wdash:'Mon Poste',wpos:'Caisse Enregistreuse',wpay:'Mon Salaire',wfrais:'Mes Frais Pro',wchat:'Discussion Interne',wstock:'Gestion du Stock',wpatients:'Dossiers Patients',warticles:'Articles de la Caisse',wteam:'Gestion d\'Équipe',whr:'Primes & Sanctions',wcompta:'Comptabilité',wgrades:'Configuration des Grades',wapps:'Candidatures Reçues'};
+  const T={home:'Mon Espace',salaires:'Mes Salaires',health:'Carnet de Santé',msg:'Messagerie',jobs:'Offres d\'Emploi',vote:'Voter les Lois',wdash:'Mon Poste',wpos:'Caisse Enregistreuse',wpay:'Mon Salaire',wfrais:'Mes Frais Pro',wchat:'Discussion Interne',wstock:'Gestion du Stock',wpatients:'Dossiers Patients',warticles:'Articles de la Caisse',wteam:'Gestion d\'Équipe',wservice:'Relevé de Service',whr:'Primes & Sanctions',wcompta:'Comptabilité',wgrades:'Configuration des Grades',wapps:'Candidatures Reçues'};
   // Handle code pages
   if (p.startsWith('code_')) {
     const codeId = p.replace('code_','');
@@ -757,7 +758,7 @@ function go(p) {
     c.innerHTML = code ? pCodeView(code) : '';
   } else {
     document.getElementById('topTitle').textContent=T[p]||p;
-    const R={home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
+    const R={home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
     c.innerHTML=(R[p]||(()=>''))();
   }
   closeSide();
@@ -800,9 +801,10 @@ function pHome() {
   h += `<div style="display:flex;gap:.8rem;margin-bottom:.8rem;flex-wrap:wrap">
     <div class="card" style="flex:1;min-width:200px;margin:0;display:flex;align-items:center;gap:.8rem;border-color:rgba(240,180,41,.2)">
       <div style="font-size:1.8rem">🪪</div>
-      <div><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px">Mon Identifiant</div>
+      <div style="flex:1"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px">Mon Identifiant</div>
       <div class="mono" style="font-size:1.3rem;font-weight:700;color:var(--gold)">${u.id}</div>
       <div style="font-size:.7rem;color:var(--t2)">${u.name} — ${u.phone}</div></div>
+      <button class="btn btn-sm btn-outline" onclick="modalEditProfile()" title="Modifier mon profil" style="padding:.3rem .5rem">✏️</button>
     </div>
     <div class="stat" style="min-width:120px;margin:0">${DB.job?`<div class="stat-l">Mon emploi</div><div class="stat-v" style="font-size:1rem;color:var(--green)">${DB.job.icon} ${DB.job.role}</div><div class="stat-s">${DB.job.company}</div>`:`<div class="stat-l">Emploi</div><div class="stat-v" style="font-size:1rem;color:var(--t3)">Aucun</div><div class="stat-s"><a href="#" onclick="go('jobs');return false" style="color:var(--gold)">Voir les offres →</a></div>`}</div>
   </div>`;
@@ -854,6 +856,55 @@ function pHome() {
 }
 
 // ============ MES SALAIRES (citizen — persiste après licenciement) ============
+function modalEditProfile() {
+  const u = DB.user;
+  const cit = DB.citizens.find(function(c){return c.id===u.id});
+  if (!cit) return;
+  modal(`<div class="modal-t">✏️ Modifier mon Profil</div>
+    <div style="text-align:center;margin-bottom:.8rem"><span class="mono" style="font-size:1.1rem;font-weight:700;color:var(--gold)">${u.id}</span></div>
+    <div class="fg"><label>Nom & Prénom</label><input id="epName" value="${cit.name}"></div>
+    <div class="fg"><label>Numéro de téléphone</label><input id="epPhone" value="${cit.phone}" placeholder="555-XXXX"></div>
+    <div class="fg"><label>Changer le mot de passe (laisser vide pour ne pas changer)</label><input id="epPass" type="password" placeholder="Nouveau mot de passe"></div>
+    <div class="fg"><label>Confirmer le mot de passe</label><input id="epPass2" type="password" placeholder="Confirmer"></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveProfile()">Sauvegarder</button></div>`);
+}
+function saveProfile() {
+  const cit = DB.citizens.find(function(c){return c.id===DB.user.id});
+  if (!cit) return;
+  const name = document.getElementById('epName').value.trim();
+  const phone = document.getElementById('epPhone').value.trim();
+  const pass = document.getElementById('epPass').value;
+  const pass2 = document.getElementById('epPass2').value;
+  if (!name) { err('Le nom est obligatoire.'); return; }
+  if (pass && pass.length < 3) { err('Le mot de passe doit faire au moins 3 caractères.'); return; }
+  if (pass && pass !== pass2) { err('Les mots de passe ne correspondent pas.'); return; }
+  // Update citizen record
+  const oldName = cit.name;
+  cit.name = name;
+  cit.phone = phone || cit.phone;
+  if (pass) cit.pass = pass;
+  // Update user session
+  DB.user.name = name;
+  DB.user.phone = phone || DB.user.phone;
+  // Update employee records if employed
+  if (DB.job) {
+    var emp = DB.job.employees.find(function(e){return e.id===DB.user.id});
+    if (emp) { emp.name = name; emp.phone = phone || emp.phone; }
+  }
+  // Update enterprise patron name if patron
+  if (cit.role === 'Patron') {
+    var ent = DB.enterprises.find(function(e){return e.patronId===DB.user.id});
+    if (ent) ent.patron = name;
+  }
+  // Update sidebar
+  var ini = name.split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
+  document.getElementById('sAv').textContent = ini;
+  document.getElementById('sName').textContent = name;
+  closeModal();
+  toast('Profil mis à jour');
+  go('home');
+}
+
 function pSalaires() {
   const myId = DB.user.id;
   const records = DB.citizenSalaries[myId] || [];
@@ -1156,13 +1207,14 @@ function submitApplication(company) {
 
 // ============ VOTES ============
 function pVote() {
-  let h = `<div style="margin-bottom:1.2rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🗳️ Voter les Lois</h1><p style="color:var(--t2);font-size:.82rem">Exprimez-vous sur les propositions de San Andreas</p></div>`;
+  let h = `<div style="margin-bottom:1.2rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🗳️ Votes & Élections</h1><p style="color:var(--t2);font-size:.82rem">Exprimez-vous sur les propositions de San Andreas</p></div>`;
   const open = DB.laws.filter(l=>l.status==='open');
   const closed = DB.laws.filter(l=>l.status==='closed');
   if (open.length) {
     h += '<div style="margin-bottom:.3rem;font-size:.75rem;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1px">En cours</div>';
     open.forEach(l => h += voteCard(l));
   }
+  if (!open.length) h += '<div class="card" style="text-align:center;color:var(--t3);padding:1rem">Aucun vote en cours.</div>';
   if (closed.length) {
     h += '<div style="margin-top:1rem;margin-bottom:.3rem;font-size:.75rem;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:1px">Terminés</div>';
     closed.forEach(l => h += voteCard(l));
@@ -1172,39 +1224,80 @@ function pVote() {
 function voteCard(l) {
   const voted = DB.voted[l.id];
   const locked = !!voted || l.status === 'closed';
-  let h = `<div class="card ${locked && voted ? '' : ''}" style="${locked?'opacity:'+(l.status==='closed'?.5:.85):''}">`;
-  h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.4rem">
-    <div style="flex:1"><div style="font-weight:600;font-size:.95rem">${l.title}</div><p style="font-size:.8rem;color:var(--t2);margin-top:.15rem">${l.desc}</p></div>
-    ${voted?`<span class="badge b-green">✓ Voté ${voted}</span>`:l.status==='closed'?'<span class="badge b-red">Terminé</span>':'<span class="badge b-blue">Ouvert</span>'}
+  const isMulti = l.choices && l.choices.length > 0;
+  let h = `<div class="card" style="${locked?'opacity:'+(l.status==='closed'?.5:.85):''}">`;
+
+  // Header
+  h += `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.5rem">
+    <div style="flex:1"><div style="font-weight:600;font-size:.95rem">${isMulti?'🗳️':'📜'} ${l.title}</div>
+    <p style="font-size:.8rem;color:var(--t2);margin-top:.15rem">${l.desc}</p></div>
+    ${voted?`<span class="badge b-green">✓ Voté</span>`:l.status==='closed'?'<span class="badge b-red">Terminé</span>':'<span class="badge b-blue">Ouvert</span>'}
   </div>`;
-  // Bar
-  h += `<div style="display:flex;align-items:center;gap:.6rem;margin:.5rem 0">
-    <span style="font-size:.76rem;color:var(--green);min-width:50px">Pour ${l.pour}%</span>
-    <div style="flex:1;height:8px;background:var(--input);border-radius:4px;overflow:hidden"><div style="height:100%;width:${l.pour}%;background:linear-gradient(90deg,var(--green),var(--gold));border-radius:4px;transition:width .5s"></div></div>
-    <span style="font-size:.76rem;color:var(--red);min-width:60px;text-align:right">Contre ${l.contre}%</span>
-  </div>`;
-  h += `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.72rem;color:var(--t3)">
-    <span>${l.total} votes${l.status==='open'?' — Limite: '+l.deadline:''}</span>`;
-  if (!locked) {
-    h += `<div style="display:flex;gap:.3rem">
-      <button class="btn btn-sm btn-green" onclick="castVote(${l.id},'pour')">✓ Pour</button>
-      <button class="btn btn-sm btn-red" onclick="castVote(${l.id},'contre')">✗ Contre</button>
+
+  if (isMulti) {
+    // Multi-choice mode (elections, sondages)
+    const totalVotes = l.choices.reduce(function(s,c){return s+(c.votes||0)},0);
+    const colors = ['var(--gold)','var(--blue)','var(--green)','var(--purple)','var(--cyan)','var(--orange)','var(--red)','#ec4899','#14b8a6','#f59e0b'];
+    l.choices.forEach(function(c, ci) {
+      const pct = totalVotes > 0 ? Math.round((c.votes||0) / totalVotes * 100) : 0;
+      const color = colors[ci % colors.length];
+      const isMyVote = voted === c.label;
+      h += `<div style="margin-bottom:.4rem">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.15rem">
+          <span style="font-size:.85rem;font-weight:${isMyVote?'700':'400'};color:${isMyVote?color:'var(--t1)'}">${isMyVote?'✓ ':''}${c.label}</span>
+          <span style="font-size:.75rem;color:var(--t3)">${c.votes||0} vote${(c.votes||0)>1?'s':''} — ${pct}%</span>
+        </div>
+        <div style="height:8px;background:var(--input);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${color};border-radius:4px;transition:width .5s"></div>
+        </div>
+      </div>`;
+    });
+    // Vote buttons
+    if (!locked) {
+      h += `<div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.6rem">`;
+      l.choices.forEach(function(c, ci) {
+        h += `<button class="btn btn-sm btn-outline" onclick="castVote(${l.id},'${c.label.replace(/'/g,"\\\'")}')" style="border-color:${colors[ci%colors.length]}40;color:${colors[ci%colors.length]}">${c.label}</button>`;
+      });
+      h += '</div>';
+    }
+    h += `<div style="font-size:.72rem;color:var(--t3);margin-top:.4rem">${totalVotes} votes au total${l.status==='open'?' — Limite: '+l.deadline:''}</div>`;
+  } else {
+    // Classic pour/contre mode
+    h += `<div style="display:flex;align-items:center;gap:.6rem;margin:.5rem 0">
+      <span style="font-size:.76rem;color:var(--green);min-width:50px">Pour ${l.pour||0}%</span>
+      <div style="flex:1;height:8px;background:var(--input);border-radius:4px;overflow:hidden"><div style="height:100%;width:${l.pour||0}%;background:linear-gradient(90deg,var(--green),var(--gold));border-radius:4px;transition:width .5s"></div></div>
+      <span style="font-size:.76rem;color:var(--red);min-width:60px;text-align:right">Contre ${l.contre||0}%</span>
     </div>`;
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;font-size:.72rem;color:var(--t3)">
+      <span>${l.total||0} votes${l.status==='open'?' — Limite: '+l.deadline:''}</span>`;
+    if (!locked) {
+      h += `<div style="display:flex;gap:.3rem">
+        <button class="btn btn-sm btn-green" onclick="castVote(${l.id},'pour')">✓ Pour</button>
+        <button class="btn btn-sm btn-red" onclick="castVote(${l.id},'contre')">✗ Contre</button>
+      </div>`;
+    }
+    h += '</div>';
   }
-  h += '</div></div>';
+  h += '</div>';
   return h;
 }
 function castVote(id, choice) {
   DB.voted[id] = choice;
   const l = DB.laws.find(x=>x.id===id);
-  // Track actual counts
-  if (!l._pour) l._pour = 0;
-  if (!l._contre) l._contre = 0;
-  if (choice === 'pour') l._pour++; else l._contre++;
-  l.total = l._pour + l._contre;
-  l.pour = l.total > 0 ? Math.round(l._pour / l.total * 100) : 0;
-  l.contre = l.total > 0 ? Math.round(l._contre / l.total * 100) : 0;
-  toast('Vote ' + choice.toUpperCase() + ' enregistré');
+  if (l.choices && l.choices.length > 0) {
+    // Multi-choice: increment the chosen option
+    var opt = l.choices.find(function(c){return c.label===choice});
+    if (opt) opt.votes = (opt.votes||0) + 1;
+  } else {
+    // Classic pour/contre
+    if (!l._pour) l._pour = 0;
+    if (!l._contre) l._contre = 0;
+    if (choice === 'pour') l._pour++; else l._contre++;
+    l.total = l._pour + l._contre;
+    l.pour = l.total > 0 ? Math.round(l._pour / l.total * 100) : 0;
+    l.contre = l.total > 0 ? Math.round(l._contre / l.total * 100) : 0;
+  }
+  toast('Vote enregistré');
   go('vote');
 }
 
@@ -1222,10 +1315,10 @@ function pWDash() {
   h += `<div class="card" style="border-color:${DB.onDuty?'var(--green)':'var(--border)'}">
     <div class="card-t">${DB.onDuty?'🟢':'⚫'} Prise de Service</div>
     <div style="display:flex;align-items:center;gap:1rem">
-      <button class="btn ${DB.onDuty?'btn-red':'btn-green'}" onclick="DB.onDuty=!DB.onDuty;toast(DB.onDuty?'En service !':'Fin de service');go('wdash')">
+      <button class="btn ${DB.onDuty?'btn-red':'btn-green'}" onclick="toggleService()">
         ${DB.onDuty?'⏹ Fin de Service':'▶ Prise de Service'}
       </button>
-      <span style="font-size:.85rem;color:var(--t2)">${DB.onDuty?'Depuis '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'}):'Hors service'}</span>
+      <span style="font-size:.85rem;color:var(--t2)">${DB.onDuty?'Depuis '+DB.onDuty:'Hors service'}</span>
     </div></div>`;
 
   // Pay structure card
@@ -2136,6 +2229,82 @@ function modalEditArticle2(idx) {
     <div class="row"><div class="fg"><label>Nom</label><input id="e2Name" value="${it.name}"></div><div class="fg"><label>Emoji</label><input id="e2Emoji" value="${it.emoji}" style="width:60px"></div></div>
     <div class="fg"><label>Prix ($)</label><input type="number" id="e2Price" value="${it.price}"></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const it=DB.job.pos[${idx}];it.name=document.getElementById('e2Name').value;it.emoji=document.getElementById('e2Emoji').value;it.price=parseInt(document.getElementById('e2Price').value)||0;closeModal();toast('Article mis à jour');go('warticles')">Sauvegarder</button></div>`);
+}
+
+// ============ WORK: TEAM ============
+// ============ SERVICE LOG ============
+function toggleService() {
+  if (!DB.job) return;
+  if (!DB.job.serviceLog) DB.job.serviceLog = [];
+  const now = new Date();
+  const time = now.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+  const date = now.toLocaleDateString('fr-FR');
+  if (!DB.onDuty) {
+    // Clock in
+    DB.onDuty = time;
+    DB.job.serviceLog.unshift({id:Date.now(), empId:DB.user.id, empName:DB.user.name, type:'in', date:date, time:time});
+    toast('En service !');
+  } else {
+    // Clock out — calculate duration
+    DB.job.serviceLog.unshift({id:Date.now(), empId:DB.user.id, empName:DB.user.name, type:'out', date:date, time:time, startedAt:DB.onDuty});
+    DB.onDuty = false;
+    toast('Fin de service');
+  }
+  // Keep max 200 entries
+  if (DB.job.serviceLog.length > 200) DB.job.serviceLog.length = 200;
+  go('wdash');
+}
+
+function pWService() {
+  if (!DB.job) return '';
+  if (!DB.job.serviceLog) DB.job.serviceLog = [];
+  const log = DB.job.serviceLog;
+  let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">📋 Relevé de Service</h1><p style="color:var(--t2);font-size:.82rem">${log.length} événements enregistrés</p></div>`;
+
+  // Current status of each employee
+  h += '<div class="card"><div class="card-t">👥 Statut Actuel des Employés</div>';
+  const activeEmps = DB.job.employees.filter(function(e){return e.status==='active'});
+  if (!activeEmps.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun employé actif.</p>';
+  activeEmps.forEach(function(emp) {
+    // Find last log entry for this employee
+    const lastIn = log.find(function(l){return l.empId===emp.id && l.type==='in'});
+    const lastOut = log.find(function(l){return l.empId===emp.id && l.type==='out'});
+    let status = 'Jamais pointé';
+    let statusColor = 'var(--t3)';
+    let badge = 'b-orange';
+    if (lastIn && (!lastOut || lastIn.id > lastOut.id)) {
+      status = '🟢 En service depuis ' + lastIn.time + ' (' + lastIn.date + ')';
+      statusColor = 'var(--green)';
+      badge = 'b-green';
+    } else if (lastOut) {
+      status = '⚫ Hors service (dernier: ' + lastOut.startedAt + ' → ' + lastOut.time + ')';
+      statusColor = 'var(--t3)';
+      badge = 'b-red';
+    }
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:7px;margin-bottom:.3rem">
+      <div><strong style="font-size:.88rem">${emp.name}</strong> <span class="mono" style="font-size:.72rem;color:var(--t3)">${emp.id}</span>
+      <div style="font-size:.72rem;color:var(--t3)">${DB.job.grades[emp.grade]?.name||'—'}</div></div>
+      <div style="text-align:right"><span class="badge ${badge}" style="font-size:.7rem">${lastIn && (!lastOut || lastIn.id > lastOut.id) ? 'En service' : 'Hors service'}</span>
+      <div style="font-size:.7rem;color:${statusColor};margin-top:.15rem">${lastIn ? lastIn.date + ' ' + lastIn.time : 'Aucun pointage'}</div></div>
+    </div>`;
+  });
+  h += '</div>';
+
+  // Log history
+  h += '<div class="card"><div class="card-t">📜 Historique des Pointages (50 derniers)</div>';
+  if (!log.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun pointage enregistré.</p>';
+  h += '<table><thead><tr><th>Date</th><th>Heure</th><th>Employé</th><th>Action</th><th>Détail</th></tr></thead><tbody>';
+  log.slice(0, 50).forEach(function(l) {
+    h += `<tr>
+      <td style="font-size:.8rem">${l.date}</td>
+      <td class="mono" style="font-size:.8rem">${l.time}</td>
+      <td style="font-size:.85rem">${l.empName} <span class="mono" style="font-size:.68rem;color:var(--t3)">${l.empId}</span></td>
+      <td><span class="badge ${l.type==='in'?'b-green':'b-red'}">${l.type==='in'?'▶ Prise de service':'⏹ Fin de service'}</span></td>
+      <td style="font-size:.78rem;color:var(--t3)">${l.type==='out' && l.startedAt ? 'Service: '+l.startedAt+' → '+l.time : ''}</td>
+    </tr>`;
+  });
+  h += '</tbody></table></div>';
+  return h;
 }
 
 // ============ WORK: TEAM ============
@@ -3163,31 +3332,93 @@ function modalEditPage(dossierIdx, pageIdx) {
 
 // ============ GOV: VOTES / LOIS ============
 function gVotes() {
-  let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🗳️ Gestion des Lois & Votes</h1></div>`;
-  h += `<div class="card"><div class="card-t">📝 Soumettre une Loi au Vote</div>
-    <div class="fg"><label>Titre de la proposition</label><input id="lvTitle" placeholder="Ex: Légalisation du..."></div>
-    <div class="fg"><label>Description</label><textarea id="lvDesc" rows="3" placeholder="Détail de la proposition..."></textarea></div>
-    <div class="fg"><label>Date limite du scrutin</label><input id="lvDead" type="date"></div>
-    <button class="btn btn-gold" onclick="const t=document.getElementById('lvTitle').value;if(!t){err('Titre requis');return}DB.laws.unshift({id:DB.laws.length+1,title:t,desc:document.getElementById('lvDesc').value||'—',pour:0,contre:0,total:0,status:'open',deadline:document.getElementById('lvDead').value||'—'});document.getElementById('lvTitle').value='';document.getElementById('lvDesc').value='';toast('Loi soumise au vote');goGov('gvotes')">📤 Soumettre au Vote Citoyen</button></div>`;
-  h += '<div class="card"><div class="card-t">📋 Lois en Cours & Passées</div>';
-  DB.laws.forEach((l,i) => {
+  let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🗳️ Gestion des Votes & Élections</h1></div>`;
+
+  // Create vote form
+  h += `<div class="card"><div class="card-t">📝 Créer un Vote</div>
+    <div class="fg"><label>Type de scrutin</label><select id="lvType" onchange="document.getElementById('lvChoicesBox').style.display=this.value==='multi'?'block':'none'">
+      <option value="law">📜 Loi — Pour / Contre</option>
+      <option value="multi">🗳️ Élection / Sondage — Choix multiples</option>
+    </select></div>
+    <div class="fg"><label>Titre</label><input id="lvTitle" placeholder="Ex: Élection du Gouverneur, Légalisation du..."></div>
+    <div class="fg"><label>Description</label><textarea id="lvDesc" rows="3" placeholder="Détail de la proposition ou du scrutin..."></textarea></div>
+    <div id="lvChoicesBox" style="display:none">
+      <div class="fg"><label>Choix / Candidats (un par ligne)</label><textarea id="lvChoices" rows="5" placeholder="Jean Dupont\nMarie Martin\nAbstention\n..."></textarea></div>
+    </div>
+    <div class="fg"><label>Date limite</label><input id="lvDead" type="date"></div>
+    <button class="btn btn-gold" onclick="createVote()">📤 Soumettre au Vote Citoyen</button></div>`;
+
+  // List existing votes
+  h += '<div class="card"><div class="card-t">📋 Votes en Cours & Passés</div>';
+  if (!DB.laws.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun vote créé.</p>';
+  DB.laws.forEach(function(l,i) {
+    const isMulti = l.choices && l.choices.length > 0;
+    const totalVotes = isMulti ? l.choices.reduce(function(s,c){return s+(c.votes||0)},0) : (l.total||0);
+
     h += `<div style="padding:.7rem 0;border-bottom:1px solid rgba(30,41,59,.3)">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><strong style="font-size:.9rem">${l.title}</strong> <span class="badge ${l.status==='open'?'b-green':'b-red'}">${l.status==='open'?'Ouvert':'Terminé'}</span></div>
+        <div style="flex:1"><strong style="font-size:.9rem">${isMulti?'🗳️':'📜'} ${l.title}</strong> <span class="badge ${l.status==='open'?'b-green':'b-red'}">${l.status==='open'?'Ouvert':'Terminé'}</span>
+        <span style="font-size:.72rem;color:var(--t3);margin-left:.5rem">${totalVotes} votes</span></div>
         <div style="display:flex;gap:.3rem">
           ${l.status==='open'?`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='closed';toast('Vote fermé');goGov('gvotes')">Fermer</button>`:`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='open';toast('Vote réouvert');goGov('gvotes')">Réouvrir</button>`}
-          <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);toast('Loi supprimée');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);toast('Vote supprimé');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
         </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:.5rem;margin:.4rem 0;font-size:.82rem">
-        <span style="color:var(--green)">Pour ${l.pour}%</span>
-        <div style="flex:1;height:6px;background:var(--input);border-radius:3px;overflow:hidden"><div style="height:100%;width:${l.pour}%;background:var(--green);border-radius:3px"></div></div>
-        <span style="color:var(--red)">Contre ${l.contre}%</span>
-        <span style="font-size:.72rem;color:var(--t3)">${l.total} votes</span>
-      </div></div>`;
+      </div>`;
+
+    if (isMulti) {
+      // Multi-choice results
+      const colors = ['var(--gold)','var(--blue)','var(--green)','var(--purple)','var(--cyan)','var(--orange)','var(--red)'];
+      l.choices.forEach(function(c, ci) {
+        const pct = totalVotes > 0 ? Math.round((c.votes||0) / totalVotes * 100) : 0;
+        h += `<div style="display:flex;align-items:center;gap:.5rem;margin:.2rem 0;font-size:.82rem">
+          <span style="min-width:120px;color:${colors[ci%colors.length]}">${c.label}</span>
+          <div style="flex:1;height:6px;background:var(--input);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${colors[ci%colors.length]};border-radius:3px"></div></div>
+          <span style="font-size:.72rem;color:var(--t3);min-width:60px;text-align:right">${c.votes||0} (${pct}%)</span>
+        </div>`;
+      });
+    } else {
+      // Classic pour/contre
+      h += `<div style="display:flex;align-items:center;gap:.5rem;margin:.4rem 0;font-size:.82rem">
+        <span style="color:var(--green)">Pour ${l.pour||0}%</span>
+        <div style="flex:1;height:6px;background:var(--input);border-radius:3px;overflow:hidden"><div style="height:100%;width:${l.pour||0}%;background:var(--green);border-radius:3px"></div></div>
+        <span style="color:var(--red)">Contre ${l.contre||0}%</span>
+      </div>`;
+    }
+    h += '</div>';
   });
   h += '</div>';
   return h;
+}
+function createVote() {
+  var title = document.getElementById('lvTitle').value.trim();
+  if (!title) { err('Titre requis.'); return; }
+  var type = document.getElementById('lvType').value;
+  var desc = document.getElementById('lvDesc').value.trim() || '—';
+  var deadline = document.getElementById('lvDead').value || '—';
+
+  if (type === 'multi') {
+    // Multi-choice
+    var choicesRaw = document.getElementById('lvChoices').value.trim();
+    if (!choicesRaw) { err('Ajoutez au moins 2 choix.'); return; }
+    var choicesList = choicesRaw.split('\n').map(function(c){return c.trim()}).filter(function(c){return c});
+    if (choicesList.length < 2) { err('Il faut au moins 2 choix.'); return; }
+    DB.laws.unshift({
+      id: Date.now(), title: title, desc: desc, status: 'open', deadline: deadline,
+      choices: choicesList.map(function(c){return {label:c, votes:0}}),
+      pour:0, contre:0, total:0
+    });
+  } else {
+    // Classic pour/contre
+    DB.laws.unshift({
+      id: Date.now(), title: title, desc: desc, status: 'open', deadline: deadline,
+      pour: 0, contre: 0, total: 0, _pour: 0, _contre: 0
+    });
+  }
+  document.getElementById('lvTitle').value = '';
+  document.getElementById('lvDesc').value = '';
+  document.getElementById('lvChoices').value = '';
+  toast('Vote soumis aux citoyens');
+  goGov('gvotes');
 }
 
 // ============ INIT ============
