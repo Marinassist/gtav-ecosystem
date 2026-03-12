@@ -358,25 +358,85 @@ function setupRealtime() {
     applyRemoteSync(payload.new.data);
   }).subscribe();
 }
+// ============ NOTIFICATION SOUND ============
+var _prevMsgCount = 0;
+var _prevAnnCount = 0;
+var _prevDecreeCount = 0;
+function playNotifSound(type) {
+  try {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    if (type === 'message') {
+      // Double beep — friendly
+      osc.frequency.value = 880;
+      gain.gain.value = 0.08;
+      osc.start(ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      osc.stop(ctx.currentTime + 0.15);
+      var osc2 = ctx.createOscillator();
+      var gain2 = ctx.createGain();
+      osc2.connect(gain2); gain2.connect(ctx.destination);
+      osc2.frequency.value = 1100;
+      gain2.gain.value = 0.08;
+      osc2.start(ctx.currentTime + 0.18);
+      gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc2.stop(ctx.currentTime + 0.35);
+    } else {
+      // Single chime — announcement
+      osc.frequency.value = 660;
+      osc.type = 'sine';
+      gain.gain.value = 0.1;
+      osc.start(ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      osc.stop(ctx.currentTime + 0.4);
+    }
+    setTimeout(function(){ctx.close()}, 500);
+  } catch(e) {}
+}
+function showNotifBanner(text) {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:1rem;right:1rem;background:rgba(240,180,41,.95);color:#0f172a;padding:.6rem 1.2rem;border-radius:10px;font-size:.82rem;font-weight:600;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.3);animation:fadeIn .3s ease';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(function(){el.style.opacity='0';el.style.transition='opacity .5s';setTimeout(function(){el.remove()},500)}, 4000);
+}
+
 function applyRemoteSync(d) {
   if (!d || !d.citizens) return;
   _lastSync = Date.now();
   _remoteSync = true;
+
+  // Detect new messages/announcements BEFORE updating data
+  var oldMsgCount = DB.messages ? DB.messages.length : 0;
+  var oldAnnCount = DB.announcements ? DB.announcements.length : 0;
+  var oldDecCount = DB.decrees ? DB.decrees.length : 0;
+
+  // Update data silently
   Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
   try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
-  // Silent re-render — no animation, no flash
-  if (DB.user) {
-    loadJob(); buildNav();
-    if (DB.currentPage) {
-      var c = document.getElementById('page');
-      if (c) { c.style.animation = 'none'; c.innerHTML = getPageContent(DB.currentPage); }
-    }
+
+  // Check for new items and notify
+  var newMsgs = (DB.messages ? DB.messages.length : 0) - oldMsgCount;
+  var newAnns = (DB.announcements ? DB.announcements.length : 0) - oldAnnCount;
+  var newDecs = (DB.decrees ? DB.decrees.length : 0) - oldDecCount;
+
+  if (newMsgs > 0) {
+    playNotifSound('message');
+    showNotifBanner('\u{2709}\u{FE0F} ' + newMsgs + ' nouveau' + (newMsgs>1?'x':'') + ' message' + (newMsgs>1?'s':''));
+  } else if (newAnns > 0) {
+    playNotifSound('announce');
+    showNotifBanner('\u{1F4E3} Nouvelle annonce');
+  } else if (newDecs > 0) {
+    playNotifSound('announce');
+    showNotifBanner('\u{1F4DC} Nouveau décret');
   }
-  var gPage = document.getElementById('gPage');
-  if (gPage && gPage.innerHTML && DB.govUser) {
-    var sel = document.querySelector('#gNav .nav-i.on');
-    if (sel) { gPage.style.animation = 'none'; gPage.innerHTML = getGovPageContent(sel.dataset.p); }
-  }
+
+  // Only update nav badge counts (non-destructive)
+  if (DB.user) { try { buildNav(); } catch(e) {} }
   _remoteSync = false;
 }
 // Helper to get page content without navigation side effects
@@ -685,6 +745,7 @@ function doRegister() {
 function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
   localStorage.setItem('sa_lastLogin', citizen.id);
+  localStorage.setItem('sa_session', JSON.stringify({type:'citizen', id:citizen.id}));
   loadJob();
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.add('on');
@@ -699,6 +760,7 @@ function doLogout() {
   DB._msgOpen = null; DB._msgView = null; DB._msgReplyTo = null;
   DB._chatView = null; DB._chatReplyTo = undefined; DB._comptaTab = null;
   DB._patientView = null;
+  localStorage.removeItem('sa_session');
   document.getElementById('app').classList.remove('on');
   document.getElementById('auth').classList.remove('hide');
 }
@@ -2850,6 +2912,7 @@ function doGovLogin() {
   const account = DB.govAccounts.find(function(a) { return a.id === id && a.code === code; });
   if (!account) { err('Code d\'accès incorrect.'); return; }
   DB.govUser = { id: account.id, name: name || account.name };
+  localStorage.setItem('sa_session', JSON.stringify({type:'gov', id:account.id, name:name||account.name}));
   document.getElementById('auth').classList.add('hide');
   document.getElementById('govApp').classList.add('on');
   document.getElementById('gAv').textContent = (name||account.name).split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
@@ -2858,6 +2921,7 @@ function doGovLogin() {
 }
 function doGovLogout() {
   DB.govUser = null;
+  localStorage.removeItem('sa_session');
   document.getElementById('govApp').classList.remove('on');
   document.getElementById('auth').classList.remove('hide');
 }
@@ -3185,32 +3249,64 @@ function delEnterprise(idx) {
   });
 }
 function modalChangePatron(idx) {
-  const e = DB.enterprises[idx];
-  const citOpts = DB.citizens.map(c => `<option value="${c.id}" ${c.id===e.patronId?'selected':''}>${c.name} (${c.id})${c.job?' — '+c.job:''}</option>`).join('');
-  modal(`<div class="modal-t">👔 Changer le Patron — ${e.name}</div>
-    <div style="padding:.6rem;background:var(--input);border-radius:6px;margin-bottom:1rem;font-size:.85rem">Patron actuel: <strong>${e.patron}</strong> <span class="mono" style="font-size:.75rem;color:var(--t3)">${e.patronId}</span></div>
-    <div class="fg"><label>Nouveau Patron — Sélectionner un citoyen</label><select id="cpId">${citOpts}</select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="changePatron(${idx})">Confirmer</button></div>`);
+  var e = DB.enterprises[idx];
+  var hasPatron = e.patron && e.patronId;
+  modal('<div class="modal-t">\u{1F454} Gérer le Patron — ' + e.name + '</div>' +
+    (hasPatron ? '<div style="padding:.6rem;background:var(--input);border-radius:6px;margin-bottom:1rem;font-size:.85rem;display:flex;justify-content:space-between;align-items:center"><span>Patron actuel: <strong>' + e.patron + '</strong> <span class="mono" style="font-size:.75rem;color:var(--t3)">' + e.patronId + '</span></span><button class="btn btn-sm btn-red" onclick="removePatron(' + idx + ')">Retirer le patron</button></div>' : '<div style="padding:.6rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);border-radius:6px;margin-bottom:1rem;font-size:.85rem;color:var(--orange)">Aucun patron assigné</div>') +
+    '<div class="fg"><label>Rechercher un citoyen par nom</label><input id="cpSearch" placeholder="Tapez un nom..." oninput="searchPatronResults(' + idx + ')"></div>' +
+    '<div id="cpResults" style="max-height:200px;overflow-y:auto"></div>' +
+    '<div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Fermer</button></div>');
 }
-function changePatron(idx) {
-  const ent = DB.enterprises[idx];
-  const newId = document.getElementById('cpId').value;
-  const newCit = DB.citizens.find(c=>c.id===newId);
-  // Remove old patron role
-  const oldCit = DB.citizens.find(c=>c.id===ent.patronId);
-  if (oldCit && oldCit.role==='Patron') { oldCit.job = null; oldCit.role = null; }
+function searchPatronResults(entIdx) {
+  var q = document.getElementById('cpSearch').value.trim().toLowerCase();
+  var box = document.getElementById('cpResults');
+  if (q.length < 2) { box.innerHTML = '<p style="font-size:.8rem;color:var(--t3)">Tapez au moins 2 caractères...</p>'; return; }
+  var results = DB.citizens.filter(function(c) { return c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q); });
+  if (!results.length) { box.innerHTML = '<p style="font-size:.8rem;color:var(--t3)">Aucun citoyen trouvé.</p>'; return; }
+  var h = '';
+  results.slice(0, 10).forEach(function(c) {
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.3rem">';
+    h += '<div><strong style="font-size:.88rem">' + c.name + '</strong> <span class="mono" style="font-size:.72rem;color:var(--t3)">' + c.id + '</span>';
+    h += (c.job ? '<div style="font-size:.72rem;color:var(--orange)">' + c.job + ' — ' + (c.role||'') + '</div>' : '<div style="font-size:.72rem;color:var(--green)">Disponible</div>') + '</div>';
+    h += '<button class="btn btn-sm btn-blue" onclick="assignPatronFromSearch(' + entIdx + ',\'' + c.id + '\')">Nommer</button>';
+    h += '</div>';
+  });
+  box.innerHTML = h;
+}
+function assignPatronFromSearch(idx, citizenId) {
+  var ent = DB.enterprises[idx];
+  var newCit = DB.citizens.find(function(c){return c.id===citizenId});
+  if (!newCit) return;
+  // Remove old patron
+  var oldCit = DB.citizens.find(function(c){return c.id===ent.patronId});
+  if (oldCit && oldCit.role==='Patron' && oldCit.id !== citizenId) { oldCit.job = null; oldCit.role = null; }
   // Set new patron
-  ent.patron = newCit ? newCit.name : '—';
-  ent.patronId = newId;
-  if (newCit) { newCit.job = ent.name; newCit.role = 'Patron'; }
-  // Update allJobs — add new patron as grade 0 employee if not already there
-  const jobData = DB.allJobs[ent.name];
-  if (jobData && newCit) {
-    const existing = jobData.employees.find(e=>e.id===newCit.id);
-    if (existing) { existing.grade = 0; existing.status = 'active'; }
-    else { jobData.employees.push({id:newCit.id, name:newCit.name, grade:0, phone:newCit.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
+  ent.patron = newCit.name;
+  ent.patronId = newCit.id;
+  newCit.job = ent.name; newCit.role = 'Patron';
+  // Update allJobs
+  if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon);
+  var jobData = DB.allJobs[ent.name];
+  var existing = jobData.employees.find(function(e){return e.id===citizenId});
+  if (existing) { existing.grade = 0; existing.status = 'active'; }
+  else { jobData.employees.push({id:citizenId, name:newCit.name, grade:0, phone:newCit.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
+  closeModal(); toast(newCit.name + ' nommé Patron de ' + ent.name); goGov('gent');
+}
+function removePatron(idx) {
+  var ent = DB.enterprises[idx];
+  if (!ent.patronId) return;
+  var oldCit = DB.citizens.find(function(c){return c.id===ent.patronId});
+  if (oldCit) {
+    // Remove from employee list
+    var jobData = DB.allJobs[ent.name];
+    if (jobData) {
+      var emp = jobData.employees.find(function(e){return e.id===ent.patronId});
+      if (emp) emp.status = 'inactive';
+    }
+    if (oldCit.role === 'Patron') { oldCit.job = null; oldCit.role = null; }
   }
-  closeModal(); toast('Patron de ' + ent.name + ' → ' + (newCit?newCit.name:'—')); goGov('gent');
+  ent.patron = ''; ent.patronId = '';
+  closeModal(); toast('Patron retiré de ' + ent.name); goGov('gent');
 }
 function modalGovPostJob(entIdx) {
   const ent = DB.enterprises[entIdx];
@@ -3790,9 +3886,43 @@ function createVote() {
   // 5. Start realtime sync
   try { setupRealtime(); } catch(e) {}
 
-  // 6. Restore login hint
-  var lastId = localStorage.getItem('sa_lastLogin');
-  if (lastId) { var inp = document.getElementById('lId'); if (inp) inp.value = lastId; }
+  // 6. Auto-restore session (stay logged in until manual logout)
+  var session = null;
+  try { session = JSON.parse(localStorage.getItem('sa_session')); } catch(e) {}
+  if (session) {
+    if (session.type === 'citizen') {
+      var cit = DB.citizens.find(function(c){return c.id===session.id});
+      if (cit) {
+        // Auto-login citizen
+        DB.user = {id:cit.id, name:cit.name, phone:cit.phone};
+        loadJob();
+        document.getElementById('auth').classList.add('hide');
+        document.getElementById('app').classList.add('on');
+        var ini = cit.name.split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
+        document.getElementById('sAv').textContent = ini;
+        document.getElementById('sName').textContent = cit.name;
+        document.getElementById('sRole').textContent = cit.id + (DB.job ? ' \u2014 ' + DB.job.icon + ' ' + DB.job.company : '');
+        buildNav(); go('home');
+      }
+    } else if (session.type === 'gov') {
+      var govAcc = DB.govAccounts ? DB.govAccounts.find(function(a){return a.id===session.id}) : null;
+      if (govAcc) {
+        // Auto-login gov
+        DB.govUser = {id:govAcc.id, name:session.name||govAcc.name};
+        document.getElementById('auth').classList.add('hide');
+        document.getElementById('govApp').classList.add('on');
+        var gini = (session.name||govAcc.name).split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
+        document.getElementById('gAv').textContent = gini;
+        document.getElementById('gSName').textContent = session.name||govAcc.name;
+        buildGovNav(); goGov('gdash');
+      }
+    }
+  }
+  // If not auto-logged, show login hint
+  if (!session || !DB.user && !DB.govUser) {
+    var lastId = localStorage.getItem('sa_lastLogin');
+    if (lastId) { var inp = document.getElementById('lId'); if (inp) inp.value = lastId; }
+  }
 
   // 7. Ready
   if (statusEl) statusEl.innerHTML = (_supabaseOK ? '🟢' : '🟡') + ' ' + DB.citizens.length + ' citoyens — ' + DB.enterprises.length + ' entreprises';
