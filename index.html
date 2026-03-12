@@ -381,32 +381,48 @@ async function pollForChanges() {
     var d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
     if (!d || !d.citizens) return;
 
-    // Check for new items (compare counts)
-    var newMsgs = (d.messages ? d.messages.length : 0) - _notifCounts.msg;
+    // Count messages FOR ME in remote data vs local
+    var myId = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : null);
+    var myEnt = '';
+    if (myId && d.citizens) {
+      var myCit = d.citizens.find(function(c){return c.id===myId});
+      if (myCit) myEnt = myCit.job || '';
+    }
+
+    // Count my messages in remote
+    var remoteMyMsgs = 0;
+    if (d.messages && myId) {
+      d.messages.forEach(function(m) {
+        if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteMyMsgs++;
+      });
+    }
+    // Count my messages locally
+    var localMyMsgs = 0;
+    if (DB.messages && myId) {
+      DB.messages.forEach(function(m) {
+        if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) localMyMsgs++;
+      });
+    }
+    var newMsgsForMe = remoteMyMsgs - localMyMsgs;
+
     var newAnns = (d.announcements ? d.announcements.length : 0) - _notifCounts.ann;
     var newDecs = (d.decrees ? d.decrees.length : 0) - _notifCounts.dec;
 
-    // Notify
-    if (newMsgs > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgs + ' nouveau' + (newMsgs>1?'x':'') + ' message' + (newMsgs>1?'s':'')); }
+    // Notify only if relevant to me
+    if (newMsgsForMe > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgsForMe + ' nouveau' + (newMsgsForMe>1?'x':'') + ' message' + (newMsgsForMe>1?'s':'')); }
     else if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
     else if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
 
-    // Update notif counts
-    _notifCounts.msg = d.messages ? d.messages.length : 0;
+    // Update counts
     _notifCounts.ann = d.announcements ? d.announcements.length : 0;
     _notifCounts.dec = d.decrees ? d.decrees.length : 0;
 
     // ONLY apply remote data if we haven't saved recently
-    // If we saved within last 20 seconds, our local data is newer — skip overwrite
     var timeSinceSave = Date.now() - _lastSave;
     if (timeSinceSave < 20000) return;
-
-    // Also skip if remote data is older than our local data
     var remoteTs = d._ts || 0;
-    var localTs = _lastSave || 0;
-    if (remoteTs <= localTs) return;
+    if (remoteTs <= _lastSave && _lastSave > 0) return;
 
-    // Safe to apply remote data
     applyRemoteSync(d);
   } catch(e) {}
 }
@@ -796,6 +812,31 @@ function doLogout() {
 }
 
 // ============ NAV ============
+function isMyMessage(m) {
+  if (!DB.user) return false;
+  var myId = DB.user.id;
+  if (m.fromId === myId) return true;
+  if (m.toId === myId) return true;
+  var myCit = DB.citizens.find(function(c){return c.id===myId});
+  var myJob = myCit ? myCit.job : '';
+  if (myJob && m.toEnterprise === myJob) return true;
+  return false;
+}
+function isMessageForMe(m) {
+  // Message addressed TO me (not sent BY me)
+  if (!DB.user) return false;
+  var myId = DB.user.id;
+  if (m.fromId === myId) return false; // I sent it
+  if (m.toId === myId) return true;
+  var myCit = DB.citizens.find(function(c){return c.id===myId});
+  var myJob = myCit ? myCit.job : '';
+  if (myJob && m.toEnterprise === myJob) return true;
+  return false;
+}
+function countMyUnread() {
+  if (!DB.user || !DB.messages) return 0;
+  return DB.messages.filter(function(m) { return !m.read && isMessageForMe(m); }).length;
+}
 function buildNav() {
   const n = document.getElementById('sNav'); n.innerHTML = '';
   const items = [
@@ -803,7 +844,7 @@ function buildNav() {
     { id:'home', ico:'🏠', label:'Mon Espace' },
     { id:'salaires', ico:'💰', label:'Mes Salaires' },
     { id:'health', ico:'🏥', label:'Carnet de Santé' },
-    { id:'msg', ico:'✉️', label:'Messages', badge: DB.messages.filter(function(m){return !m.read && m.fromId!==DB.user.id && (m.toId===DB.user.id || (DB.user && DB.citizens.find(function(c){return c.id===DB.user.id})?.job && m.toEnterprise===DB.citizens.find(function(c){return c.id===DB.user.id}).job))}).length },
+    { id:'msg', ico:'✉️', label:'Messages', badge: countMyUnread() },
     { id:'jobs', ico:'💼', label:'Offres d\'Emploi' },
     { id:'vote', ico:'🗳️', label:'Voter les Lois' },
   ];
@@ -905,7 +946,7 @@ function pHome() {
 
   // STATS
   h += `<div class="stats">
-    <div class="stat"><div class="stat-l">Messages</div><div class="stat-v" style="color:var(--blue)">${DB.messages.filter(m=>!m.read).length}</div><div class="stat-s">Non lus</div></div>
+    <div class="stat"><div class="stat-l">Messages</div><div class="stat-v" style="color:var(--blue)">${countMyUnread()}</div><div class="stat-s">Non lus</div></div>
     <div class="stat"><div class="stat-l">Votes ouverts</div><div class="stat-v" style="color:var(--purple)">${DB.laws.filter(l=>l.status==='open'&&!DB.voted[l.id]).length}</div><div class="stat-s">En attente</div></div>
     <div class="stat"><div class="stat-l">Santé</div><div class="stat-v" style="font-size:1rem;color:var(--green)">🟢 Stable</div><div class="stat-s">${(DB.healthRecords[DB.user.id]?.history||[])[0]?.date||'Aucun soin'}</div></div>
   </div>`;
@@ -1197,26 +1238,20 @@ function pMsg() {
   if (DB._msgView === 'reply') return pMsgReply();
   if (DB._msgOpen !== undefined && DB._msgOpen !== null) return pMsgDetail(DB._msgOpen);
 
-  // Filter messages: only show messages I sent OR addressed to me/my enterprise
-  const myId = DB.user.id;
-  const myEnt = DB.citizens.find(function(c){return c.id===myId})?.job || '';
-  const myMsgs = DB.messages.filter(function(m) {
-    if (m.fromId === myId) return true; // I sent it
-    if (m.toId === myId) return true; // Addressed to me
-    if (myEnt && m.toEnterprise === myEnt) return true; // Addressed to my enterprise
-    return false;
-  });
+  // Filter messages: only show messages I'm involved in
+  var myMsgs = DB.messages.filter(function(m) { return isMyMessage(m); });
 
   let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
-    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">✉️ Messagerie</h1><p style="color:var(--t2);font-size:.82rem">${myMsgs.filter(m=>!m.read&&m.fromId!==myId).length} non lus — ${myMsgs.length} messages</p></div>
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">✉️ Messagerie</h1><p style="color:var(--t2);font-size:.82rem">${myMsgs.filter(function(m){return !m.read && isMessageForMe(m)}).length} non lus — ${myMsgs.length} messages</p></div>
     <button class="btn btn-sm btn-blue" onclick="DB._msgView='compose';go('msg')">📝 Nouveau Message</button>
   </div>`;
 
   h += '<div class="card" style="padding:0">';
   if (!myMsgs.length) h += '<div style="padding:1.5rem;text-align:center;color:var(--t3)">Aucun message</div>';
   myMsgs.forEach(function(m) {
-    const realIdx = DB.messages.indexOf(m);
-    const isSent = m.fromId === myId;
+    var realIdx = DB.messages.indexOf(m);
+    var isSent = m.fromId === DB.user.id;
+    var unread = !m.read && !isSent;
     h += `<div style="display:flex;gap:.7rem;padding:.7rem 1rem;cursor:pointer;border-bottom:1px solid rgba(30,41,59,.3);transition:background .1s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background=''" onclick="DB._msgOpen=${realIdx};go('msg')">
       <span style="font-size:1.2rem;margin-top:.15rem">${isSent?'📤':m.icon||'📧'}</span>
       <div style="flex:1;min-width:0">
@@ -1253,8 +1288,11 @@ function pMsgDetail(idx) {
 }
 
 function pMsgCompose() {
-  // Build enterprise list from DB
-  const entOpts = DB.enterprises.filter(e=>e.status==='active').map(e => `<option value="${e.icon} ${e.name}">${e.icon} ${e.name}</option>`).join('');
+  // Build enterprise list with data-name for reliable extraction
+  var entOpts = '';
+  DB.enterprises.filter(function(e){return e.status==='active'}).forEach(function(e) {
+    entOpts += '<option value="' + e.name + '" data-icon="' + e.icon + '">' + e.icon + ' ' + e.name + '</option>';
+  });
 
   let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._msgView=null;go('msg')">← Retour</button></div>`;
   h += `<div class="card">
@@ -1273,20 +1311,27 @@ function pMsgCompose() {
 }
 
 function sendNewMsg() {
-  const to = document.getElementById('compTo').value;
-  const subj = document.getElementById('compSubj').value.trim();
-  const body = document.getElementById('compBody').value.trim();
+  var sel = document.getElementById('compTo');
+  var entName = sel.value; // Clean enterprise name (no emoji)
+  var entIcon = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].getAttribute('data-icon') || '' : '';
+  var subj = document.getElementById('compSubj').value.trim();
+  var body = document.getElementById('compBody').value.trim();
   if (!subj) { err('Entrez un objet.'); return; }
   if (!body) { err('Écrivez un message.'); return; }
-  // Extract enterprise name from "🚕 Downtown Cab Co." format
-  const entName = to.replace(/^[^\s]+\s/, '');
   DB.messages.unshift({
-    id: Date.now(), from: DB.user.name, fromId: DB.user.id, to: to, toEnterprise: entName,
-    icon: '📤', subject: subj, body: body,
-    date: new Date().toLocaleDateString('fr-FR'), read: false
+    id: Date.now(),
+    from: DB.user.name,
+    fromId: DB.user.id,
+    to: entIcon + ' ' + entName,
+    toEnterprise: entName,
+    icon: entIcon || '📧',
+    subject: subj,
+    body: body,
+    date: new Date().toLocaleDateString('fr-FR'),
+    read: false
   });
   DB._msgView = null;
-  toast('Message envoyé à ' + to);
+  toast('Message envoyé à ' + entIcon + ' ' + entName);
   go('msg');
 }
 
