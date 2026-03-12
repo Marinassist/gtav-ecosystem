@@ -491,28 +491,32 @@ function applyRemoteSync(d) {
     d.citizens.forEach(function(rc) {
       if (!DB.citizens.find(function(c){return c.id===rc.id})) DB.citizens.push(rc);
     });
-    // Remove citizens deleted remotely
-    DB.citizens = DB.citizens.filter(function(c) {
-      return d.citizens.find(function(rc){return rc.id===c.id});
+    // NEVER auto-delete citizens — only manual gov deletion via deleteCitizen()
+  }
+
+  // Enterprises: merge, don't replace (keep local ones that might not be in stale remote)
+  if (d.enterprises) {
+    d.enterprises.forEach(function(re) {
+      var local = DB.enterprises.find(function(e){return e.id===re.id || e.name===re.name});
+      if (local) { local.patron = re.patron; local.patronId = re.patronId; local.status = re.status; local.name = re.name; local.icon = re.icon; local.type = re.type; }
+      else { DB.enterprises.push(re); }
     });
   }
 
-  // ALWAYS accept enterprise metadata
-  if (d.enterprises) DB.enterprises = d.enterprises;
-
-  // ALWAYS accept gov accounts, laws, decrees, votes, announcements, messages, legal codes
-  if (d.govAccounts) DB.govAccounts = d.govAccounts;
-  if (d.laws) DB.laws = d.laws;
-  if (d.decrees) DB.decrees = d.decrees;
-  if (d.announcements) DB.announcements = d.announcements;
-  if (d.messages) DB.messages = d.messages;
-  if (d.voted) DB.voted = d.voted;
+  // ALWAYS accept gov accounts
+  if (d.govAccounts && d.govAccounts.length >= (DB.govAccounts||[]).length) DB.govAccounts = d.govAccounts;
+  // Laws, decrees, announcements, messages: take the longer list (more data = newer)
+  if (d.laws && d.laws.length >= (DB.laws||[]).length) DB.laws = d.laws;
+  if (d.decrees && d.decrees.length >= (DB.decrees||[]).length) DB.decrees = d.decrees;
+  if (d.announcements && d.announcements.length >= (DB.announcements||[]).length) DB.announcements = d.announcements;
+  if (d.messages && d.messages.length >= (DB.messages||[]).length) DB.messages = d.messages;
+  if (d.voted) { Object.keys(d.voted).forEach(function(k){ DB.voted[k] = d.voted[k]; }); }
   if (d.legalCodes) DB.legalCodes = d.legalCodes;
+  if (d.jobs && d.jobs.length >= (DB.jobs||[]).length) DB.jobs = d.jobs;
   if (d.defcon !== undefined) DB.defcon = d.defcon;
   if (d.defconLog) DB.defconLog = d.defconLog;
   if (d.defconProtos) DB.defconProtos = d.defconProtos;
   if (d.vault) DB.vault = d.vault;
-  if (d.jobs) DB.jobs = d.jobs;
   if (d.govBudget) DB.govBudget = d.govBudget;
   if (d.govTaxDeclarations) DB.govTaxDeclarations = d.govTaxDeclarations;
   if (d.taxConfig) DB.taxConfig = d.taxConfig;
@@ -554,10 +558,7 @@ function applyRemoteSync(d) {
         }
       }
     });
-    // Remove enterprises deleted remotely
-    Object.keys(DB.allJobs).forEach(function(k) {
-      if (!d.allJobs[k]) delete DB.allJobs[k];
-    });
+    // NEVER auto-delete enterprise data — only manual gov deletion via delEnterprise()
   }
 
   try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
