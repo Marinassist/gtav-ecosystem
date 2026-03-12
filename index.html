@@ -382,7 +382,7 @@ function applyRemoteSync(d) {
 // Helper to get page content without navigation side effects
 function getPageContent(p) {
   if (p.startsWith('code_')) { var code = DB.legalCodes.find(function(x){return x.id===p.replace('code_','')}); return code ? pCodeView(code) : ''; }
-  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
+  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,winfo:pWInfo,wapps:pWApps};
   return R[p] ? R[p]() : '';
 }
 function getGovPageContent(p) {
@@ -733,6 +733,7 @@ function buildNav() {
       items.push({ id:'wcompta', ico:'📒', label:'Comptabilité' });
       if (myGrade.canArticles) items.push({ id:'warticles', ico:'🏷️', label:'Articles Caisse' });
       items.push({ id:'wgrades', ico:'⚙️', label:'Grades' });
+      items.push({ id:'winfo', ico:'🏦', label:'Infos Entreprise' });
       if (myGrade.canHire) items.push({ id:'wapps', ico:'📨', label:'Candidatures', badge: DB.job.pendingApps.length });
     }
   } else {
@@ -750,7 +751,7 @@ function go(p) {
   DB.currentPage = p;
   document.querySelectorAll('.nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('page');
-  const T={home:'Mon Espace',salaires:'Mes Salaires',health:'Carnet de Santé',msg:'Messagerie',jobs:'Offres d\'Emploi',vote:'Voter les Lois',wdash:'Mon Poste',wpos:'Caisse Enregistreuse',wpay:'Mon Salaire',wfrais:'Mes Frais Pro',wchat:'Discussion Interne',wstock:'Gestion du Stock',wpatients:'Dossiers Patients',warticles:'Articles de la Caisse',wteam:'Gestion d\'Équipe',wservice:'Relevé de Service',whr:'Primes & Sanctions',wcompta:'Comptabilité',wgrades:'Configuration des Grades',wapps:'Candidatures Reçues'};
+  const T={home:'Mon Espace',salaires:'Mes Salaires',health:'Carnet de Santé',msg:'Messagerie',jobs:'Offres d\'Emploi',vote:'Voter les Lois',wdash:'Mon Poste',wpos:'Caisse Enregistreuse',wpay:'Mon Salaire',wfrais:'Mes Frais Pro',wchat:'Discussion Interne',wstock:'Gestion du Stock',wpatients:'Dossiers Patients',warticles:'Articles de la Caisse',wteam:'Gestion d\'Équipe',wservice:'Relevé de Service',whr:'Primes & Sanctions',wcompta:'Comptabilité',wgrades:'Configuration des Grades',winfo:'Infos Entreprise',wapps:'Candidatures Reçues'};
   // Handle code pages
   if (p.startsWith('code_')) {
     const codeId = p.replace('code_','');
@@ -759,7 +760,7 @@ function go(p) {
     c.innerHTML = code ? pCodeView(code) : '';
   } else {
     document.getElementById('topTitle').textContent=T[p]||p;
-    const R={home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,wapps:pWApps};
+    const R={home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,winfo:pWInfo,wapps:pWApps};
     c.innerHTML=(R[p]||(()=>''))();
   }
   closeSide();
@@ -1937,53 +1938,99 @@ function modalAddCompanyExpense() {
 }
 
 function payWeeklySalaries() {
-  const j = DB.job;
-  const thisWeek = j.weeklyHistory.length ? j.weeklyHistory[0] : null;
+  var j = DB.job;
+  var thisWeek = j.weeklyHistory.length ? j.weeklyHistory[0] : null;
   if (!thisWeek) { toast('Aucune donnée pour cette semaine'); return; }
 
-  let totalPaid = 0;
-  let count = 0;
-
-  j.employees.filter(e => e.status === 'active').forEach(e => {
-    const g = j.grades[e.grade];
-    const wd = thisWeek.data[e.id] || { invoiced: 0, count: 0 };
-    const commAmount = g.commission ? Math.round(wd.invoiced * g.commission / 100) : 0;
-    const weekTotal = (g.fixe || 0) + commAmount + (g.prime || 0);
-
-    // Init citizen salary array if needed
+  // Build preview of all salaries
+  var rows = [];
+  var totalPay = 0;
+  var alreadyCount = 0;
+  j.employees.filter(function(e){return e.status==='active'}).forEach(function(e) {
+    var g = j.grades[e.grade];
+    var wd = thisWeek.data[e.id] || {invoiced:0, count:0};
+    var commAmount = g.commission ? Math.round(wd.invoiced * g.commission / 100) : 0;
+    var weekTotal = (g.fixe||0) + commAmount + (g.prime||0);
+    // Check if already paid
     if (!DB.citizenSalaries[e.id]) DB.citizenSalaries[e.id] = [];
+    var already = DB.citizenSalaries[e.id].find(function(r){return r.week===thisWeek.week && r.company===j.company});
+    rows.push({emp:e, grade:g, invoiced:wd.invoiced, count:wd.count, fixe:g.fixe||0, comm:commAmount, prime:g.prime||0, total:weekTotal, paid:!!already});
+    if (!already) totalPay += weekTotal;
+    else alreadyCount++;
+  });
 
-    // Check if already paid this week
-    const alreadyPaid = DB.citizenSalaries[e.id].find(r => r.week === thisWeek.week && r.company === j.company);
+  if (rows.length === 0) { err('Aucun employé actif.'); return; }
+  if (alreadyCount === rows.length) { toast('Tous les salaires de la semaine ont déjà été versés.'); return; }
+
+  // Build modal with recap table
+  var html = '<div class="modal-t">\u{1F4B3} Récapitulatif des Salaires — ' + thisWeek.week + '</div>';
+  html += '<div style="max-height:400px;overflow-y:auto">';
+  html += '<table><thead><tr><th>Employé</th><th>Grade</th><th>Facturé</th><th>Fixe</th><th>Commission</th><th>Prime</th><th>Total</th><th>Statut</th></tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr style="' + (r.paid?'opacity:.4':'') + '">';
+    html += '<td style="font-size:.82rem;font-weight:600">' + r.emp.name + '</td>';
+    html += '<td><span class="badge b-gold" style="font-size:.65rem">' + r.grade.name + '</span></td>';
+    html += '<td class="mono" style="font-size:.8rem">$' + r.invoiced.toLocaleString() + '</td>';
+    html += '<td class="mono" style="font-size:.8rem">' + (r.fixe ? '$'+r.fixe.toLocaleString() : '\u2014') + '</td>';
+    html += '<td class="mono" style="font-size:.8rem;color:var(--blue)">' + (r.comm ? '$'+r.comm.toLocaleString() : '\u2014') + '</td>';
+    html += '<td class="mono" style="font-size:.8rem;color:var(--purple)">' + (r.prime ? '$'+r.prime.toLocaleString() : '\u2014') + '</td>';
+    html += '<td class="mono" style="font-weight:700;color:var(--green)">$' + r.total.toLocaleString() + '</td>';
+    html += '<td>' + (r.paid ? '<span class="badge b-green">\u2713 Versé</span>' : '<span class="badge b-orange">À verser</span>') + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+
+  // Total
+  var toPay = rows.filter(function(r){return !r.paid}).length;
+  html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem;padding-top:.8rem;border-top:2px solid var(--gold)">';
+  html += '<div><div style="font-size:.78rem;color:var(--t3)">' + toPay + ' employé' + (toPay>1?'s':'') + ' à payer' + (alreadyCount ? ' (' + alreadyCount + ' déjà versé' + (alreadyCount>1?'s':'') + ')' : '') + '</div>';
+  html += '<div style="font-family:Rajdhani,sans-serif;font-size:1.8rem;font-weight:700;color:var(--gold)">Total: $' + totalPay.toLocaleString() + '</div></div>';
+  html += '<div style="display:flex;gap:.4rem"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="confirmPaySalaries()">\u{1F4B3} Confirmer le versement</button></div>';
+  html += '</div>';
+  modal(html);
+}
+
+function confirmPaySalaries() {
+  var j = DB.job;
+  var thisWeek = j.weeklyHistory.length ? j.weeklyHistory[0] : null;
+  if (!thisWeek) return;
+  var totalPaid = 0;
+  var count = 0;
+
+  j.employees.filter(function(e){return e.status==='active'}).forEach(function(e) {
+    var g = j.grades[e.grade];
+    var wd = thisWeek.data[e.id] || {invoiced:0, count:0};
+    var commAmount = g.commission ? Math.round(wd.invoiced * g.commission / 100) : 0;
+    var weekTotal = (g.fixe||0) + commAmount + (g.prime||0);
+    if (!DB.citizenSalaries[e.id]) DB.citizenSalaries[e.id] = [];
+    var alreadyPaid = DB.citizenSalaries[e.id].find(function(r){return r.week===thisWeek.week && r.company===j.company});
     if (alreadyPaid) return;
 
-    // Record salary in citizen space
     DB.citizenSalaries[e.id].unshift({
-      week: thisWeek.week,
-      company: j.company,
-      icon: j.icon,
-      grade: g.name,
-      invoiced: wd.invoiced,
-      fixe: g.fixe || 0,
-      commission: commAmount,
-      prime: g.prime || 0,
-      total: weekTotal,
-      date: new Date().toLocaleDateString('fr-FR')
+      week: thisWeek.week, company: j.company, icon: j.icon, grade: g.name,
+      invoiced: wd.invoiced, fixe: g.fixe||0, commission: commAmount,
+      prime: g.prime||0, total: weekTotal, date: new Date().toLocaleDateString('fr-FR')
     });
 
-    // Max 10 weeks per company per citizen
-    const companyRecords = DB.citizenSalaries[e.id].filter(r => r.company === j.company);
+    var companyRecords = DB.citizenSalaries[e.id].filter(function(r){return r.company===j.company});
     if (companyRecords.length > 10) {
-      const oldest = companyRecords[companyRecords.length - 1];
-      const idx = DB.citizenSalaries[e.id].indexOf(oldest);
+      var oldest = companyRecords[companyRecords.length-1];
+      var idx = DB.citizenSalaries[e.id].indexOf(oldest);
       if (idx > -1) DB.citizenSalaries[e.id].splice(idx, 1);
     }
-
     totalPaid += weekTotal;
     count++;
   });
 
-  if (count === 0) { toast('Salaires déjà versés pour cette semaine'); return; }
+  // Deduct from bank balance
+  if (j.bankBalance !== undefined) {
+    j.bankBalance -= totalPaid;
+    if (!j.comptaHistory) j.comptaHistory = [];
+    j.comptaHistory.unshift({id:Date.now(), date:new Date().toLocaleDateString('fr-FR'), desc:'Versement salaires — ' + thisWeek.week + ' (' + count + ' employés)', amount:totalPaid, type:'out'});
+  }
+
+  closeModal();
+  if (count === 0) { toast('Salaires déjà versés'); return; }
   toast(count + ' salaires versés — Total: $' + totalPaid.toLocaleString());
   go('wcompta');
 }
@@ -2679,6 +2726,67 @@ function saveGradeEdit(idx) {
   // Update current user's permissions if editing own grade
   if (idx === DB.job.gradeIndex) DB.job.role = g.name;
   closeModal(); toast('Grade «' + g.name + '» mis à jour'); buildNav(); go('wgrades');
+}
+
+// ============ WORK: CANDIDATURES ============
+// ============ WORK: INFOS ENTREPRISE ============
+function pWInfo() {
+  if (!DB.job) return '';
+  var j = DB.job;
+  if (!j.info) j.info = {rib:'', iban:'', bic:'', siret:'', address:'', phone:'', email:'', notes:''};
+  var inf = j.info;
+  var h = '<div style="margin-bottom:1rem"><h1 style="font-family:Rajdhani,sans-serif;font-size:1.5rem;font-weight:700">\u{1F3E6} Infos Entreprise</h1><p style="color:var(--t2);font-size:.82rem">' + j.icon + ' ' + j.company + '</p></div>';
+
+  // Bank info card
+  h += '<div class="card" style="border-color:rgba(240,180,41,.2)">';
+  h += '<div class="card-t" style="justify-content:space-between">\u{1F4B3} Coordonnées Bancaires <button class="btn btn-sm btn-outline" onclick="modalEditEntInfo()">✏\uFE0F Modifier</button></div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.6rem">';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">RIB</div><div style="font-family:monospace;font-size:.9rem;font-weight:600;color:var(--gold)">' + (inf.rib || '<span style="color:var(--t3);font-weight:400">Non renseigné</span>') + '</div></div>';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">IBAN</div><div style="font-family:monospace;font-size:.9rem;font-weight:600;color:var(--gold)">' + (inf.iban || '<span style="color:var(--t3);font-weight:400">Non renseigné</span>') + '</div></div>';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">BIC / SWIFT</div><div style="font-family:monospace;font-size:.9rem;font-weight:600">' + (inf.bic || '<span style="color:var(--t3);font-weight:400">Non renseigné</span>') + '</div></div>';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">N° SIRET</div><div style="font-family:monospace;font-size:.9rem;font-weight:600">' + (inf.siret || '<span style="color:var(--t3);font-weight:400">Non renseigné</span>') + '</div></div>';
+  h += '</div></div>';
+
+  // Contact info card
+  h += '<div class="card"><div class="card-t">\u{1F4DE} Coordonnées</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:.6rem">';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">Adresse</div><div style="font-size:.88rem">' + (inf.address || '<span style="color:var(--t3)">Non renseignée</span>') + '</div></div>';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">Téléphone</div><div style="font-size:.88rem;font-family:monospace">' + (inf.phone || '<span style="color:var(--t3)">Non renseigné</span>') + '</div></div>';
+  h += '<div style="padding:.6rem .8rem;background:var(--input);border-radius:8px"><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:.2rem">Email</div><div style="font-size:.88rem">' + (inf.email || '<span style="color:var(--t3)">Non renseigné</span>') + '</div></div>';
+  h += '</div></div>';
+
+  // Notes card
+  h += '<div class="card"><div class="card-t">\u{1F4DD} Notes internes</div>';
+  if (inf.notes) h += '<div style="font-size:.88rem;line-height:1.7;white-space:pre-wrap;color:var(--t1)">' + inf.notes + '</div>';
+  else h += '<p style="color:var(--t3);font-size:.83rem">Aucune note. Cliquez Modifier pour ajouter des informations.</p>';
+  h += '</div>';
+
+  return h;
+}
+function modalEditEntInfo() {
+  var inf = DB.job.info || {rib:'',iban:'',bic:'',siret:'',address:'',phone:'',email:'',notes:''};
+  modal('<div class="modal-t">\u{1F3E6} Modifier les Infos Entreprise</div>' +
+    '<div class="fg"><label>RIB</label><input id="eiRib" value="' + (inf.rib||'') + '" placeholder="Ex: 30001 00001 1234567890A 12"></div>' +
+    '<div class="row"><div class="fg"><label>IBAN</label><input id="eiIban" value="' + (inf.iban||'') + '" placeholder="Ex: FR76 3000 1000 0112 3456 7890 A12"></div><div class="fg"><label>BIC / SWIFT</label><input id="eiBic" value="' + (inf.bic||'') + '" placeholder="Ex: BNPAFRPP"></div></div>' +
+    '<div class="fg"><label>N° SIRET</label><input id="eiSiret" value="' + (inf.siret||'') + '" placeholder="Ex: 123 456 789 00012"></div>' +
+    '<div class="fg"><label>Adresse</label><input id="eiAddr" value="' + (inf.address||'') + '" placeholder="Ex: 42 Vinewood Blvd, Los Santos"></div>' +
+    '<div class="row"><div class="fg"><label>Téléphone</label><input id="eiPhone" value="' + (inf.phone||'') + '" placeholder="555-XXXX"></div><div class="fg"><label>Email</label><input id="eiEmail" value="' + (inf.email||'') + '" placeholder="contact@entreprise.sa"></div></div>' +
+    '<div class="fg"><label>Notes internes (RIB employés, fournisseurs, codes...)</label><textarea id="eiNotes" rows="5" placeholder="Informations confidentielles...">' + (inf.notes||'') + '</textarea></div>' +
+    '<div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveEntInfo()">Sauvegarder</button></div>');
+}
+function saveEntInfo() {
+  if (!DB.job.info) DB.job.info = {};
+  DB.job.info.rib = document.getElementById('eiRib').value.trim();
+  DB.job.info.iban = document.getElementById('eiIban').value.trim();
+  DB.job.info.bic = document.getElementById('eiBic').value.trim();
+  DB.job.info.siret = document.getElementById('eiSiret').value.trim();
+  DB.job.info.address = document.getElementById('eiAddr').value.trim();
+  DB.job.info.phone = document.getElementById('eiPhone').value.trim();
+  DB.job.info.email = document.getElementById('eiEmail').value.trim();
+  DB.job.info.notes = document.getElementById('eiNotes').value;
+  closeModal();
+  toast('Informations mises à jour');
+  go('winfo');
 }
 
 // ============ WORK: CANDIDATURES ============
