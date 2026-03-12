@@ -427,6 +427,44 @@ function resetAllData() {
   sb.rpc('set_shared_state', { new_data: {} }).then(function() { location.reload(); }).catch(function() { location.reload(); });
 }
 
+function showOfflineBanner() {
+  var existing = document.getElementById('offlineBanner');
+  if (existing) existing.remove();
+  var banner = document.createElement('div');
+  banner.id = 'offlineBanner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:linear-gradient(135deg,#b45309,#d97706);color:#fff;padding:.8rem 1.2rem;display:flex;align-items:center;justify-content:center;gap:1rem;font-family:inherit;font-size:.88rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.4);animation:slideDown .4s ease';
+  banner.innerHTML = '<span>\u26A0\uFE0F Connexion Supabase indisponible — Données chargées depuis le cache local (possiblement obsolètes)</span><button onclick="forceSupabaseSync()" style="background:#fff;color:#b45309;border:none;padding:.4rem 1rem;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer;white-space:nowrap">\u{1F504} SYNCHRONISER MAINTENANT</button><button onclick="this.parentElement.remove()" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:.3rem .7rem;border-radius:4px;font-size:.78rem;cursor:pointer">\u2715</button>';
+  document.body.appendChild(banner);
+  // Add animation
+  var style = document.createElement('style');
+  style.textContent = '@keyframes slideDown{from{transform:translateY(-100%)}to{transform:translateY(0)}}';
+  document.head.appendChild(style);
+}
+
+async function forceSupabaseSync() {
+  var banner = document.getElementById('offlineBanner');
+  if (banner) banner.innerHTML = '<span>\u{23F3} Synchronisation en cours...</span>';
+  try {
+    var ok = await Promise.race([
+      loadFromSupabase(),
+      new Promise(function(r) { setTimeout(function() { r(false); }, 5000); })
+    ]);
+    if (ok) {
+      if (_useKV) { try { await loadEntsKV(); } catch(e) {} }
+      try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
+      if (DB.user) { try { loadJob(); buildNav(); renderPage(); } catch(e) {} }
+      if (DB.govUser) { try { goGov(DB.govUser._lastPage || 'gdash'); } catch(e) {} }
+      if (banner) banner.remove();
+      updateSyncBadge('ok');
+      toast('\u2705 Données synchronisées depuis Supabase');
+    } else {
+      if (banner) banner.innerHTML = '<span>\u274C Supabase toujours indisponible — Réessayez plus tard</span><button onclick="forceSupabaseSync()" style="background:#fff;color:#b45309;border:none;padding:.4rem 1rem;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer">\u{1F504} RÉESSAYER</button><button onclick="this.parentElement.remove()" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:.3rem .7rem;border-radius:4px;font-size:.78rem;cursor:pointer">\u2715</button>';
+    }
+  } catch(e) {
+    if (banner) banner.innerHTML = '<span>\u274C Erreur réseau — Réessayez</span><button onclick="forceSupabaseSync()" style="background:#fff;color:#b45309;border:none;padding:.4rem 1rem;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer">\u{1F504} RÉESSAYER</button><button onclick="this.parentElement.remove()" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:.3rem .7rem;border-radius:4px;font-size:.78rem;cursor:pointer">\u2715</button>';
+  }
+}
+
 function updateSyncBadge(state) {
   var el = document.getElementById('syncBadge');
   if (!el) {
@@ -442,6 +480,9 @@ function updateSyncBadge(state) {
     el.textContent='\u{1F7E2} Sync OK';
     clearTimeout(el._t); el._t = setTimeout(function() { el.style.opacity='.4'; }, 3000);
     el.style.opacity='1';
+    // Auto-dismiss offline banner if it was showing
+    var ob = document.getElementById('offlineBanner');
+    if (ob) { ob.style.transition='opacity .5s'; ob.style.opacity='0'; setTimeout(function(){ob.remove()},600); }
   } else {
     el.style.background='rgba(239,68,68,.2)'; el.style.color='#ef4444'; el.style.opacity='1';
     el.textContent='\u{1F534} Hors ligne (' + _saveFails + ') — Cliquez ici';
@@ -4170,42 +4211,53 @@ function createVote() {
   var statusEl = document.getElementById('connStatus');
   if (statusEl) statusEl.innerHTML = '⏳ Chargement...';
 
-  // 1. Load from localStorage first (instant)
-  var loaded = loadFromLocal();
-  if (loaded) console.log('⚡ Loaded from localStorage');
-
-  // 1b. Detect per-enterprise storage (shared_kv table)
+  // 1. Detect per-enterprise storage (shared_kv table)
   try { _useKV = await Promise.race([detectKV(), new Promise(function(r){setTimeout(function(){r(false)},2000)})]); } catch(e) { _useKV = false; }
   if (_useKV) console.log('✅ Stockage par entreprise actif (shared_kv)');
 
-  // 2. If no local data, try Supabase (3s max)
+  // 2. SUPABASE EST LA SOURCE DE VÉRITÉ — toujours essayer en premier
+  var loaded = false;
+  try {
+    loaded = await Promise.race([
+      loadFromSupabase(),
+      new Promise(function(r) { setTimeout(function() { r(false); }, 4000); })
+    ]);
+  } catch(e) {}
+  if (loaded) console.log('☁️ Données chargées depuis Supabase');
+
+  // 3. Si Supabase échoue/timeout → fallback localStorage (cache hors-ligne)
+  var _offlineMode = false;
   if (!loaded) {
-    try {
-      loaded = await Promise.race([
-        loadFromSupabase(),
-        new Promise(function(r) { setTimeout(function() { r(false); }, 3000); })
-      ]);
-    } catch(e) {}
+    loaded = loadFromLocal();
+    if (loaded) {
+      console.log('⚡ Fallback localStorage (Supabase indisponible)');
+      _offlineMode = true;
+    }
   }
 
-  // 3. If still nothing, initialisation
+  // 4. Si rien nulle part → première initialisation
   if (!loaded) {
     initAllJobs();
     console.log('🆕 Données initialisées');
   }
 
-  // 3b. Sync enterprises from shared_kv (even if localStorage loaded — get latest from other players)
+  // 5. Sync entreprises depuis shared_kv
   if (_useKV && loaded) {
     try { await Promise.race([loadEntsKV(), new Promise(function(r){setTimeout(function(){r(false)},3000)})]); } catch(e) {}
   }
 
-  // 4. Save to both (localStorage instant + Supabase background)
-  saveDB();
+  // 6. Sauvegarder le cache local (sans écraser Supabase si on vient de le lire)
+  try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
+  // Ne push vers Supabase QUE si c'est une première init (pas de données en remote)
+  if (!_supabaseOK) saveDB();
 
-  // 5. Start realtime sync
+  // 7. Start realtime sync
   try { setupRealtime(); } catch(e) {}
 
-  // 6. Auto-restore session (stay logged in until manual logout)
+  // 7b. Show offline banner if localStorage fallback
+  if (_offlineMode) showOfflineBanner();
+
+  // 8. Auto-restore session (stay logged in until manual logout)
   var session = null;
   try { session = JSON.parse(localStorage.getItem('sa_session')); } catch(e) {}
   if (session) {
