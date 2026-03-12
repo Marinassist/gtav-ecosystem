@@ -345,18 +345,41 @@ function updateSyncBadge(state) {
 var _lastSync = 0;
 var _pendingSync = null;
 function setupRealtime() {
-  sb.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, function(payload) {
-    if (DB.user && payload.new.updated_by === DB.user.id) return;
-    var now = Date.now();
-    // Throttle: max 1 sync every 10 seconds
-    if (now - _lastSync < 10000) {
-      // Queue the latest data, will apply after cooldown
-      if (_pendingSync) clearTimeout(_pendingSync);
-      _pendingSync = setTimeout(function() { applyRemoteSync(payload.new.data); }, 10000 - (now - _lastSync));
-      return;
-    }
-    applyRemoteSync(payload.new.data);
-  }).subscribe();
+  // Polling every 15s — always works, no dependency on Supabase Realtime
+  _notifCounts = {msg: DB.messages ? DB.messages.length : 0, ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
+  setInterval(function() { pollForChanges(); }, 15000);
+  // Also try Supabase Realtime as bonus
+  try {
+    sb.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, function(payload) {
+      if (DB.user && payload.new.updated_by === DB.user.id) return;
+      var now = Date.now();
+      if (now - _lastSync < 10000) return;
+      applyRemoteSync(payload.new.data);
+    }).subscribe();
+  } catch(e) {}
+}
+var _notifCounts = {msg:0, ann:0, dec:0};
+async function pollForChanges() {
+  try {
+    var res = await sb.rpc('get_shared_state');
+    if (res.error || !res.data) return;
+    var d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+    if (!d || !d.citizens) return;
+    // Check for new items
+    var newMsgs = (d.messages ? d.messages.length : 0) - _notifCounts.msg;
+    var newAnns = (d.announcements ? d.announcements.length : 0) - _notifCounts.ann;
+    var newDecs = (d.decrees ? d.decrees.length : 0) - _notifCounts.dec;
+    // Notify
+    if (newMsgs > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgs + ' nouveau' + (newMsgs>1?'x':'') + ' message' + (newMsgs>1?'s':'')); }
+    else if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
+    else if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
+    // Update counts
+    _notifCounts.msg = d.messages ? d.messages.length : 0;
+    _notifCounts.ann = d.announcements ? d.announcements.length : 0;
+    _notifCounts.dec = d.decrees ? d.decrees.length : 0;
+    // Apply data silently
+    applyRemoteSync(d);
+  } catch(e) {}
 }
 // ============ NOTIFICATION SOUND ============
 var _prevMsgCount = 0;
@@ -409,33 +432,10 @@ function applyRemoteSync(d) {
   if (!d || !d.citizens) return;
   _lastSync = Date.now();
   _remoteSync = true;
-
-  // Detect new messages/announcements BEFORE updating data
-  var oldMsgCount = DB.messages ? DB.messages.length : 0;
-  var oldAnnCount = DB.announcements ? DB.announcements.length : 0;
-  var oldDecCount = DB.decrees ? DB.decrees.length : 0;
-
   // Update data silently
   Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
   try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
-
-  // Check for new items and notify
-  var newMsgs = (DB.messages ? DB.messages.length : 0) - oldMsgCount;
-  var newAnns = (DB.announcements ? DB.announcements.length : 0) - oldAnnCount;
-  var newDecs = (DB.decrees ? DB.decrees.length : 0) - oldDecCount;
-
-  if (newMsgs > 0) {
-    playNotifSound('message');
-    showNotifBanner('\u{2709}\u{FE0F} ' + newMsgs + ' nouveau' + (newMsgs>1?'x':'') + ' message' + (newMsgs>1?'s':''));
-  } else if (newAnns > 0) {
-    playNotifSound('announce');
-    showNotifBanner('\u{1F4E3} Nouvelle annonce');
-  } else if (newDecs > 0) {
-    playNotifSound('announce');
-    showNotifBanner('\u{1F4DC} Nouveau décret');
-  }
-
-  // Only update nav badge counts (non-destructive)
+  // Only update nav badge counts
   if (DB.user) { try { buildNav(); } catch(e) {} }
   _remoteSync = false;
 }
@@ -746,6 +746,7 @@ function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
   localStorage.setItem('sa_lastLogin', citizen.id);
   localStorage.setItem('sa_session', JSON.stringify({type:'citizen', id:citizen.id}));
+  _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   loadJob();
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.add('on');
@@ -2913,6 +2914,7 @@ function doGovLogin() {
   if (!account) { err('Code d\'accès incorrect.'); return; }
   DB.govUser = { id: account.id, name: name || account.name };
   localStorage.setItem('sa_session', JSON.stringify({type:'gov', id:account.id, name:name||account.name}));
+  _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   document.getElementById('auth').classList.add('hide');
   document.getElementById('govApp').classList.add('on');
   document.getElementById('gAv').textContent = (name||account.name).split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
@@ -3895,6 +3897,7 @@ function createVote() {
       if (cit) {
         // Auto-login citizen
         DB.user = {id:cit.id, name:cit.name, phone:cit.phone};
+        _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         loadJob();
         document.getElementById('auth').classList.add('hide');
         document.getElementById('app').classList.add('on');
@@ -3909,6 +3912,7 @@ function createVote() {
       if (govAcc) {
         // Auto-login gov
         DB.govUser = {id:govAcc.id, name:session.name||govAcc.name};
+        _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         document.getElementById('auth').classList.add('hide');
         document.getElementById('govApp').classList.add('on');
         var gini = (session.name||govAcc.name).split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
