@@ -2007,31 +2007,78 @@ function pWCompta() {
   h += '</div>';
 
   if (tab === 'overview') {
-    // Salary payment
-    h += '<div class="card" style="border-color:rgba(34,197,94,.2)"><div class="card-t" style="justify-content:space-between">\u{1F4B5} Versement des Salaires <button class="btn btn-sm btn-green" onclick="payWeeklySalaries()">\u{1F4B3} Verser les salaires</button></div>';
-    h += '<p style="font-size:.82rem;color:var(--t2)">Calcule et enregistre le salaire de chaque employé.</p></div>';
+    // Employee weekly performance
+    var thisWeek = j.weeklyHistory.length ? j.weeklyHistory[0] : null;
+    h += '<div class="card"><div class="card-t" style="justify-content:space-between">\u{1F4CA} Performance Employés — Semaine en cours <button class="btn btn-sm btn-green" onclick="payWeeklySalaries()">\u{1F4B3} Verser les salaires</button></div>';
+    var activeEmps = j.employees.filter(function(e){return e.status==='active'});
+    if (!activeEmps.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun employé actif.</p>';
+    else {
+      h += '<table><thead><tr><th>Employé</th><th>Grade</th><th>Facturé</th><th>Nb Factures</th><th>Fixe</th><th>Commission</th><th>Prime</th><th style="color:var(--gold)">Salaire est.</th></tr></thead><tbody>';
+      var totalSalaries = 0;
+      activeEmps.forEach(function(emp) {
+        var g = j.grades[emp.grade] || j.grades[0];
+        var wd = thisWeek && thisWeek.data[emp.id] ? thisWeek.data[emp.id] : {invoiced:0, count:0};
+        var comm = g.commission ? Math.round(wd.invoiced * g.commission / 100) : 0;
+        var sal = (g.fixe||0) + comm + (g.prime||0);
+        totalSalaries += sal;
+        h += '<tr>';
+        h += '<td style="font-weight:600;font-size:.85rem">' + emp.name + '</td>';
+        h += '<td><span class="badge b-gold" style="font-size:.65rem">' + g.name + '</span></td>';
+        h += '<td class="mono" style="color:var(--blue)">$' + wd.invoiced.toLocaleString() + '</td>';
+        h += '<td class="mono">' + wd.count + '</td>';
+        h += '<td class="mono">' + (g.fixe ? '$' + g.fixe.toLocaleString() : '\u2014') + '</td>';
+        h += '<td class="mono" style="color:var(--blue)">' + (comm ? '$' + comm.toLocaleString() : '\u2014') + '</td>';
+        h += '<td class="mono" style="color:var(--purple)">' + (g.prime ? '$' + g.prime.toLocaleString() : '\u2014') + '</td>';
+        h += '<td class="mono" style="font-weight:700;color:var(--gold)">$' + sal.toLocaleString() + '</td>';
+        h += '</tr>';
+      });
+      h += '</tbody></table>';
+      h += '<div style="text-align:right;margin-top:.5rem;font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700;color:var(--gold)">Total salaires: $' + totalSalaries.toLocaleString() + '</div>';
+    }
+    h += '</div>';
 
-    // Bank movements log
-    h += '<div class="card"><div class="card-t">\u{1F4CA} Mouvements du Compte (20 derniers)</div>';
-    h += '<table><thead><tr><th>Date</th><th>Description</th><th>Entrée</th><th>Sortie</th><th>Solde</th></tr></thead><tbody>';
-    var entries = [];
-    // Add invoices as entries
-    j.invoices.forEach(function(inv) { entries.push({date:inv.date+' '+inv.time, desc:inv.items.join(', '), amount:inv.total, type:'in'}); });
-    // Add bank operations
-    (j.comptaHistory||[]).forEach(function(op) { entries.push(op); });
-    // Sort by date desc (most recent first)
-    entries.sort(function(a,b) { return (b.id||0) - (a.id||0); });
-    var runBal = j.bankBalance;
-    entries.slice(0,20).forEach(function(e) {
-      h += '<tr><td style="font-size:.75rem">' + e.date + '</td><td style="font-size:.82rem">' + e.desc + '</td>';
-      if (e.type === 'in') {
-        h += '<td style="color:var(--green);font-weight:600">+$' + e.amount.toLocaleString() + '</td><td>—</td>';
-      } else {
-        h += '<td>—</td><td style="color:var(--red);font-weight:600">-$' + e.amount.toLocaleString() + '</td>';
-      }
-      h += '<td style="font-weight:600;color:var(--gold)">$' + runBal.toLocaleString() + '</td></tr>';
+    // Income / Expenses side by side
+    h += '<div class="row">';
+    // Rentrées
+    h += '<div class="card"><div class="card-t" style="color:var(--green)">\u{1F4C8} Rentrées d\'Argent</div>';
+    h += '<table><thead><tr><th>Date</th><th>Description</th><th>Montant</th></tr></thead><tbody>';
+    j.invoices.slice(0,10).forEach(function(inv) {
+      h += '<tr><td style="font-size:.78rem">' + (inv.date||'') + ' ' + inv.time + '</td><td style="font-size:.82rem">' + inv.items.join(', ') + '</td><td class="mono" style="color:var(--green)">+$' + inv.total.toLocaleString() + '</td></tr>';
     });
-    h += '</tbody></table></div>';
+    if (!j.invoices.length) h += '<tr><td colspan="3" style="color:var(--t3);text-align:center">Aucune facture</td></tr>';
+    h += '</tbody></table>';
+    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--green)">Total: <strong>$' + totalCA.toLocaleString() + '</strong></div></div>';
+
+    // Sorties
+    h += '<div class="card"><div class="card-t" style="color:var(--red)">\u{1F4C9} Sorties d\'Argent</div>';
+    h += '<table><thead><tr><th>Date</th><th>Description</th><th>Montant</th></tr></thead><tbody>';
+    var allExp = [];
+    j.companyExpenses.forEach(function(e) { allExp.push({date:e.date, desc:e.desc + ' (' + e.type + ')', amount:e.amount, id:e.id||0}); });
+    j.employeeExpenses.filter(function(e){return e.status==='approved'}).forEach(function(e) { allExp.push({date:e.date, desc:'Frais ' + e.empName + ' — ' + e.desc, amount:e.amount, id:e.id||0}); });
+    (j.comptaHistory||[]).filter(function(e){return e.type==='out'}).forEach(function(e) { allExp.push({date:e.date, desc:e.desc, amount:e.amount, id:e.id||0}); });
+    allExp.sort(function(a,b){return (b.id||0)-(a.id||0)});
+    allExp.slice(0,10).forEach(function(e) {
+      h += '<tr><td style="font-size:.78rem">' + e.date + '</td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">-$' + e.amount.toLocaleString() + '</td></tr>';
+    });
+    if (!allExp.length) h += '<tr><td colspan="3" style="color:var(--t3);text-align:center">Aucune dépense</td></tr>';
+    h += '</tbody></table>';
+    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--red)">Total: <strong>$' + totalExpenses.toLocaleString() + '</strong></div></div>';
+    h += '</div>';
+
+    // Bank movements
+    h += '<div class="card"><div class="card-t">\u{1F4B3} Mouvements Bancaires</div>';
+    var bankOps = (j.comptaHistory||[]).slice(0,15);
+    if (!bankOps.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun mouvement bancaire. Utilisez D\u00E9p\u00F4t / Retrait ci-dessus.</p>';
+    else {
+      h += '<table><thead><tr><th>Date</th><th>Description</th><th>Montant</th></tr></thead><tbody>';
+      bankOps.forEach(function(op) {
+        var color = op.type === 'in' ? 'var(--green)' : 'var(--red)';
+        var sign = op.type === 'in' ? '+' : '-';
+        h += '<tr><td style="font-size:.78rem">' + op.date + '</td><td style="font-size:.82rem">' + op.desc + '</td><td class="mono" style="color:' + color + ';font-weight:600">' + sign + '$' + op.amount.toLocaleString() + '</td></tr>';
+      });
+      h += '</tbody></table>';
+    }
+    h += '</div>';
 
   } else if (tab === 'expenses') {
     h += '<div class="card"><div class="card-t" style="justify-content:space-between">\u{1F4B8} Charges de l\'Entreprise <button class="btn btn-sm btn-blue" onclick="modalAddCompanyExpense()">+ Ajouter</button></div>';
