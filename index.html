@@ -417,12 +417,7 @@ async function pollForChanges() {
     _notifCounts.ann = d.announcements ? d.announcements.length : 0;
     _notifCounts.dec = d.decrees ? d.decrees.length : 0;
 
-    // ONLY apply remote data if we haven't saved recently
-    var timeSinceSave = Date.now() - _lastSave;
-    if (timeSinceSave < 20000) return;
-    var remoteTs = d._ts || 0;
-    if (remoteTs <= _lastSave && _lastSave > 0) return;
-
+    // Always merge remote data (smart merge protects local work data)
     applyRemoteSync(d);
   } catch(e) {}
 }
@@ -475,12 +470,97 @@ function showNotifBanner(text) {
 
 function applyRemoteSync(d) {
   if (!d || !d.citizens) return;
-  // Don't overwrite if we saved recently
-  if (Date.now() - _lastSave < 20000) return;
   _lastSync = Date.now();
   _remoteSync = true;
-  Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
-  try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
+
+  var recentSave = (Date.now() - _lastSave < 20000);
+
+  // ALWAYS accept these from remote (gov decisions, shared data):
+  if (d.citizens) {
+    // Merge citizens: accept job/role/name changes from remote
+    d.citizens.forEach(function(rc) {
+      var local = DB.citizens.find(function(c){return c.id===rc.id});
+      if (local) {
+        local.job = rc.job;
+        local.role = rc.role;
+        local.name = rc.name;
+        local.phone = rc.phone;
+      }
+    });
+    // Add new citizens that don't exist locally
+    d.citizens.forEach(function(rc) {
+      if (!DB.citizens.find(function(c){return c.id===rc.id})) DB.citizens.push(rc);
+    });
+    // Remove citizens deleted remotely
+    DB.citizens = DB.citizens.filter(function(c) {
+      return d.citizens.find(function(rc){return rc.id===c.id});
+    });
+  }
+
+  // ALWAYS accept enterprise metadata
+  if (d.enterprises) DB.enterprises = d.enterprises;
+
+  // ALWAYS accept gov accounts, laws, decrees, votes, announcements, messages, legal codes
+  if (d.govAccounts) DB.govAccounts = d.govAccounts;
+  if (d.laws) DB.laws = d.laws;
+  if (d.decrees) DB.decrees = d.decrees;
+  if (d.announcements) DB.announcements = d.announcements;
+  if (d.messages) DB.messages = d.messages;
+  if (d.voted) DB.voted = d.voted;
+  if (d.legalCodes) DB.legalCodes = d.legalCodes;
+  if (d.defcon !== undefined) DB.defcon = d.defcon;
+  if (d.defconLog) DB.defconLog = d.defconLog;
+  if (d.defconProtos) DB.defconProtos = d.defconProtos;
+  if (d.vault) DB.vault = d.vault;
+  if (d.jobs) DB.jobs = d.jobs;
+  if (d.govBudget) DB.govBudget = d.govBudget;
+  if (d.govTaxDeclarations) DB.govTaxDeclarations = d.govTaxDeclarations;
+  if (d.taxConfig) DB.taxConfig = d.taxConfig;
+  if (d.healthRecords) DB.healthRecords = d.healthRecords;
+  if (d.citizenSalaries) DB.citizenSalaries = d.citizenSalaries;
+  if (d.tempPatients) DB.tempPatients = d.tempPatients;
+
+  // allJobs: merge carefully — accept remote employee lists & grades, but protect local work data if saved recently
+  if (d.allJobs) {
+    Object.keys(d.allJobs).forEach(function(entName) {
+      var remote = d.allJobs[entName];
+      var local = DB.allJobs[entName];
+      if (!local) {
+        // New enterprise from remote — take it fully
+        DB.allJobs[entName] = remote;
+      } else {
+        // ALWAYS accept from remote: employees, grades (gov/patron decisions)
+        local.employees = remote.employees;
+        local.grades = remote.grades;
+        local.company = remote.company;
+        local.icon = remote.icon;
+        local.pendingApps = remote.pendingApps;
+        local.info = remote.info || local.info;
+        // Work data: only accept from remote if we haven't saved recently
+        if (!recentSave) {
+          local.pos = remote.pos;
+          local.invoices = remote.invoices;
+          local.weeklyHistory = remote.weeklyHistory;
+          local.companyExpenses = remote.companyExpenses;
+          local.employeeExpenses = remote.employeeExpenses;
+          local.taxDeclarations = remote.taxDeclarations;
+          local.stock = remote.stock;
+          local.internalMessages = remote.internalMessages;
+          local.hrRecords = remote.hrRecords;
+          local.serviceLog = remote.serviceLog;
+          local.bankBalance = remote.bankBalance;
+          local.comptaHistory = remote.comptaHistory;
+          local.comptaWeeks = remote.comptaWeeks;
+        }
+      }
+    });
+    // Remove enterprises deleted remotely
+    Object.keys(DB.allJobs).forEach(function(k) {
+      if (!d.allJobs[k]) delete DB.allJobs[k];
+    });
+  }
+
+  try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
   if (DB.user) { try { loadJob(); buildNav(); } catch(e) {} }
   _remoteSync = false;
 }
