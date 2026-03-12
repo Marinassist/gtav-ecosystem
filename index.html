@@ -269,7 +269,7 @@ function getPayload() {
     citizenSalaries: DB.citizenSalaries, tempPatients: DB.tempPatients,
     taxConfig: DB.taxConfig, govBudget: DB.govBudget,
     govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault, defconProtos: DB.defconProtos,
-    govAccounts: DB.govAccounts, messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
+    govAccounts: DB.govAccounts, announcements: DB.announcements, messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
   };
 }
 
@@ -416,6 +416,7 @@ const DB = {
   job: null,
   govUser: null,
   govAccounts: [],
+  announcements: [],
   defcon: 5,
   govTaxDeclarations: [],
   govBudget: { balance: 0, income: [], expenses: [], investments: [] },
@@ -710,7 +711,7 @@ function buildNav() {
     { id:'home', ico:'🏠', label:'Mon Espace' },
     { id:'salaires', ico:'💰', label:'Mes Salaires' },
     { id:'health', ico:'🏥', label:'Carnet de Santé' },
-    { id:'msg', ico:'✉️', label:'Messages', badge: DB.messages.filter(m=>!m.read).length },
+    { id:'msg', ico:'✉️', label:'Messages', badge: DB.messages.filter(function(m){return !m.read && m.fromId!==DB.user.id && (m.toId===DB.user.id || (DB.user && DB.citizens.find(function(c){return c.id===DB.user.id})?.job && m.toEnterprise===DB.citizens.find(function(c){return c.id===DB.user.id}).job))}).length },
     { id:'jobs', ico:'💼', label:'Offres d\'Emploi' },
     { id:'vote', ico:'🗳️', label:'Voter les Lois' },
   ];
@@ -830,6 +831,48 @@ function pHome() {
   });
   h += '</div>';
 
+  // ANNOUNCEMENTS / EVENTS BOARD
+  if (DB.announcements && DB.announcements.length) {
+    h += `<div class="card"><div class="card-t">📣 Annonces & Événements</div>`;
+    DB.announcements.slice(0,6).forEach(function(a) {
+      const isPoll = a.poll && a.poll.length > 0;
+      const myVote = a.votes ? a.votes[DB.user.id] : null;
+      const totalPollVotes = isPoll ? a.poll.reduce(function(s,p){return s+(p.count||0)},0) : 0;
+      h += `<div style="padding:.6rem 0;border-bottom:1px solid rgba(30,41,59,.3)">
+        <div style="display:flex;gap:.5rem;align-items:flex-start">
+          <span style="font-size:1.1rem">${a.icon||'📣'}</span>
+          <div style="flex:1">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:600;font-size:.9rem">${a.title}</span>
+              <span style="font-size:.68rem;color:var(--t3)">${a.date} — ${a.company}</span>
+            </div>
+            <p style="font-size:.82rem;color:var(--t2);margin-top:.15rem">${a.body}</p>`;
+      // Poll
+      if (isPoll) {
+        a.poll.forEach(function(opt, oi) {
+          const pct = totalPollVotes > 0 ? Math.round((opt.count||0)/totalPollVotes*100) : 0;
+          const voted = myVote === opt.label;
+          h += `<div style="margin-top:.3rem">
+            <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:.1rem">
+              <span style="color:${voted?'var(--gold)':'var(--t2)'};font-weight:${voted?'600':'400'}">${voted?'✓ ':''}${opt.label}</span>
+              <span style="color:var(--t3)">${opt.count||0} (${pct}%)</span>
+            </div>
+            <div style="height:5px;background:var(--input);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${voted?'var(--gold)':'var(--blue)'};border-radius:3px"></div></div>
+          </div>`;
+        });
+        if (!myVote) {
+          h += `<div style="display:flex;flex-wrap:wrap;gap:.2rem;margin-top:.4rem">`;
+          a.poll.forEach(function(opt) {
+            h += `<button class="btn btn-sm btn-outline" style="font-size:.72rem;padding:.15rem .4rem" onclick="voteAnnouncement(${a.id},'${opt.label.replace(/'/g,"\\\\'")}')">${opt.label}</button>`;
+          });
+          h += '</div>';
+        }
+      }
+      h += '</div></div></div>';
+    });
+    h += '</div>';
+  }
+
   // LEGAL CODES — clickable cards
   h += `<div class="card"><div class="card-t">📚 Codes & Législation</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.6rem">`;
@@ -856,6 +899,46 @@ function pHome() {
 }
 
 // ============ MES SALAIRES (citizen — persiste après licenciement) ============
+function voteAnnouncement(annId, choice) {
+  var a = DB.announcements.find(function(x){return x.id===annId});
+  if (!a || !a.poll) return;
+  if (!a.votes) a.votes = {};
+  if (a.votes[DB.user.id]) { err('Vous avez déjà voté.'); return; }
+  a.votes[DB.user.id] = choice;
+  var opt = a.poll.find(function(p){return p.label===choice});
+  if (opt) opt.count = (opt.count||0) + 1;
+  toast('Vote enregistré');
+  go('home');
+}
+function modalPostAnnouncement() {
+  if (!DB.job) return;
+  modal(`<div class="modal-t">📣 Publier une Annonce</div>
+    <div style="padding:.4rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">${DB.job.icon} ${DB.job.company}</div>
+    <div class="fg"><label>Titre</label><input id="anTitle" placeholder="Ex: Soirée d'ouverture, Happy Hour..."></div>
+    <div class="fg"><label>Message</label><textarea id="anBody" rows="3" placeholder="Détail de l'annonce..."></textarea></div>
+    <div class="fg"><label>Sondage (optionnel — un choix par ligne, laisser vide si pas de sondage)</label><textarea id="anPoll" rows="3" placeholder="Option 1\nOption 2\nOption 3"></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="publishAnnouncement()">Publier</button></div>`);
+}
+function publishAnnouncement() {
+  var title = document.getElementById('anTitle').value.trim();
+  if (!title) { err('Titre requis.'); return; }
+  var body = document.getElementById('anBody').value.trim() || '';
+  var pollRaw = document.getElementById('anPoll').value.trim();
+  var poll = [];
+  if (pollRaw) {
+    poll = pollRaw.split('\n').map(function(l){return l.trim()}).filter(function(l){return l}).map(function(l){return {label:l,count:0}});
+  }
+  if (!DB.announcements) DB.announcements = [];
+  DB.announcements.unshift({
+    id: Date.now(), title: title, body: body, icon: DB.job.icon,
+    company: DB.job.company, author: DB.user.name, date: new Date().toLocaleDateString('fr-FR'),
+    poll: poll, votes: {}
+  });
+  // Max 20 announcements
+  if (DB.announcements.length > 20) DB.announcements.length = 20;
+  closeModal(); toast('Annonce publiée'); go('wdash');
+}
+
 function modalEditProfile() {
   const u = DB.user;
   const cit = DB.citizens.find(function(c){return c.id===u.id});
@@ -1021,23 +1104,34 @@ function pMsg() {
   if (DB._msgView === 'reply') return pMsgReply();
   if (DB._msgOpen !== undefined && DB._msgOpen !== null) return pMsgDetail(DB._msgOpen);
 
+  // Filter messages: only show messages I sent OR addressed to me/my enterprise
+  const myId = DB.user.id;
+  const myEnt = DB.citizens.find(function(c){return c.id===myId})?.job || '';
+  const myMsgs = DB.messages.filter(function(m) {
+    if (m.fromId === myId) return true; // I sent it
+    if (m.toId === myId) return true; // Addressed to me
+    if (myEnt && m.toEnterprise === myEnt) return true; // Addressed to my enterprise
+    return false;
+  });
+
   let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
-    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">✉️ Messagerie</h1><p style="color:var(--t2);font-size:.82rem">${DB.messages.filter(m=>!m.read).length} non lus — ${DB.messages.length} messages</p></div>
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">✉️ Messagerie</h1><p style="color:var(--t2);font-size:.82rem">${myMsgs.filter(m=>!m.read&&m.fromId!==myId).length} non lus — ${myMsgs.length} messages</p></div>
     <button class="btn btn-sm btn-blue" onclick="DB._msgView='compose';go('msg')">📝 Nouveau Message</button>
   </div>`;
 
   h += '<div class="card" style="padding:0">';
-  if (!DB.messages.length) h += '<div style="padding:1.5rem;text-align:center;color:var(--t3)">Aucun message</div>';
-  DB.messages.forEach((m,i) => {
-    const isSent = m.sentByMe;
-    h += `<div style="display:flex;gap:.7rem;padding:.7rem 1rem;cursor:pointer;border-bottom:1px solid rgba(30,41,59,.3);transition:background .1s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background=''" onclick="DB._msgOpen=${i};go('msg')">
+  if (!myMsgs.length) h += '<div style="padding:1.5rem;text-align:center;color:var(--t3)">Aucun message</div>';
+  myMsgs.forEach(function(m) {
+    const realIdx = DB.messages.indexOf(m);
+    const isSent = m.fromId === myId;
+    h += `<div style="display:flex;gap:.7rem;padding:.7rem 1rem;cursor:pointer;border-bottom:1px solid rgba(30,41,59,.3);transition:background .1s" onmouseover="this.style.background='var(--bg4)'" onmouseout="this.style.background=''" onclick="DB._msgOpen=${realIdx};go('msg')">
       <span style="font-size:1.2rem;margin-top:.15rem">${isSent?'📤':m.icon||'📧'}</span>
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-weight:${m.read?'400':'600'};font-size:.86rem">${isSent?'→ '+m.to:m.from}</span>
+          <span style="font-weight:${m.read||isSent?'400':'600'};font-size:.86rem">${isSent?'→ '+m.to:m.from}</span>
           <span style="font-size:.68rem;color:var(--t3);flex-shrink:0">${m.date}</span>
         </div>
-        <div style="font-size:.82rem;color:${m.read?'var(--t3)':'var(--t1)'};margin-top:.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.subject}</div>
+        <div style="font-size:.82rem;color:${m.read||isSent?'var(--t3)':'var(--t1)'};margin-top:.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.subject}</div>
       </div>
       ${!m.read&&!isSent?'<div style="width:8px;height:8px;border-radius:50%;background:var(--blue);margin-top:.5rem;flex-shrink:0"></div>':''}
     </div>`;
@@ -1047,7 +1141,7 @@ function pMsg() {
 
 function pMsgDetail(idx) {
   const m = DB.messages[idx]; m.read = true; buildNav();
-  const isSent = m.sentByMe;
+  const isSent = m.fromId === DB.user.id;
   let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._msgOpen=null;go('msg')">← Retour</button></div>`;
   h += `<div class="card">
     <div style="display:flex;gap:.6rem;align-items:flex-start;margin-bottom:1rem;padding-bottom:.8rem;border-bottom:1px solid var(--border)">
@@ -1068,16 +1162,12 @@ function pMsgDetail(idx) {
 function pMsgCompose() {
   // Build enterprise list from DB
   const entOpts = DB.enterprises.filter(e=>e.status==='active').map(e => `<option value="${e.icon} ${e.name}">${e.icon} ${e.name}</option>`).join('');
-  const otherOpts = `<option value="🏛️ État de San Andreas">🏛️ État de San Andreas</option><option value="🚔 LSPD">🚔 LSPD</option><option value="🚒 LSFD">🚒 LSFD</option>`;
 
   let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._msgView=null;go('msg')">← Retour</button></div>`;
   h += `<div class="card">
     <div class="card-t">📝 Nouveau Message</div>
     <div class="fg"><label>Destinataire</label>
-      <select id="compTo">
-        <optgroup label="Entreprises">${entOpts}</optgroup>
-        <optgroup label="Services Publics">${otherOpts}</optgroup>
-      </select>
+      <select id="compTo">${entOpts}</select>
     </div>
     <div class="fg"><label>Objet</label><input id="compSubj" placeholder="Objet du message"></div>
     <div class="fg"><label>Message</label><textarea id="compBody" rows="6" placeholder="Écrivez votre message..."></textarea></div>
@@ -1095,10 +1185,12 @@ function sendNewMsg() {
   const body = document.getElementById('compBody').value.trim();
   if (!subj) { err('Entrez un objet.'); return; }
   if (!body) { err('Écrivez un message.'); return; }
+  // Extract enterprise name from "🚕 Downtown Cab Co." format
+  const entName = to.replace(/^[^\s]+\s/, '');
   DB.messages.unshift({
-    id: Date.now(), from: DB.user.name, to: to, icon: '📤',
-    subject: subj, body: body,
-    date: new Date().toLocaleDateString('fr-FR'), read: true, sentByMe: true
+    id: Date.now(), from: DB.user.name, fromId: DB.user.id, to: to, toEnterprise: entName,
+    icon: '📤', subject: subj, body: body,
+    date: new Date().toLocaleDateString('fr-FR'), read: false
   });
   DB._msgView = null;
   toast('Message envoyé à ' + to);
@@ -1130,9 +1222,9 @@ function sendReply() {
   const body = document.getElementById('reBody').value.trim();
   if (!body) { err('Écrivez une réponse.'); return; }
   DB.messages.unshift({
-    id: Date.now(), from: DB.user.name, to: orig.from, icon: '📤',
-    subject: subj || 'RE: ' + orig.subject, body: body,
-    date: new Date().toLocaleDateString('fr-FR'), read: true, sentByMe: true
+    id: Date.now(), from: DB.user.name, fromId: DB.user.id, to: orig.from, toId: orig.fromId,
+    icon: '📤', subject: subj || 'RE: ' + orig.subject, body: body,
+    date: new Date().toLocaleDateString('fr-FR'), read: false
   });
   DB._msgView = null; DB._msgOpen = null;
   toast('Réponse envoyée à ' + orig.from);
@@ -1309,7 +1401,10 @@ function pWDash() {
   const myInvoicesThisWeek = j.weeklyHistory.length ? (j.weeklyHistory[0].data[myId] || {invoiced:0,count:0}) : {invoiced:0,count:0};
   const myPay = calcWeekPay(j.gradeIndex, myInvoicesThisWeek.invoiced);
 
-  let h = `<div style="margin-bottom:1.2rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">${j.icon} ${j.company}</h1><p style="color:var(--t2);font-size:.82rem">${j.role} — <span class="badge b-gold">${g.name}</span></p></div>`;
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.2rem;flex-wrap:wrap;gap:.5rem">
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">${j.icon} ${j.company}</h1><p style="color:var(--t2);font-size:.82rem">${j.role} — <span class="badge b-gold">${g.name}</span></p></div>
+    ${g.canManage?'<button class="btn btn-sm btn-outline" onclick="modalPostAnnouncement()" style="border-color:rgba(240,180,41,.3);color:var(--gold)">📣 Publier une Annonce</button>':''}
+  </div>`;
 
   // Prise de service
   h += `<div class="card" style="border-color:${DB.onDuty?'var(--green)':'var(--border)'}">
@@ -2570,6 +2665,31 @@ function doChangeGovPass() {
   toast('Code d\'accès modifié avec succès');
   saveDB();
 }
+function modalGovAnnouncement() {
+  modal(`<div class="modal-t">📣 Annonce Gouvernementale</div>
+    <div class="fg"><label>Titre</label><input id="gaTitle" placeholder="Ex: Nouvelles mesures, Événement public..."></div>
+    <div class="fg"><label>Message</label><textarea id="gaBody" rows="3" placeholder="Détail de l'annonce..."></textarea></div>
+    <div class="fg"><label>Sondage (optionnel — un choix par ligne)</label><textarea id="gaPoll" rows="3" placeholder="Option 1\nOption 2\n..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="publishGovAnnouncement()">Publier</button></div>`);
+}
+function publishGovAnnouncement() {
+  var title = document.getElementById('gaTitle').value.trim();
+  if (!title) { err('Titre requis.'); return; }
+  var body = document.getElementById('gaBody').value.trim() || '';
+  var pollRaw = document.getElementById('gaPoll').value.trim();
+  var poll = [];
+  if (pollRaw) {
+    poll = pollRaw.split('\n').map(function(l){return l.trim()}).filter(function(l){return l}).map(function(l){return {label:l,count:0}});
+  }
+  if (!DB.announcements) DB.announcements = [];
+  DB.announcements.unshift({
+    id: Date.now(), title: title, body: body, icon: '🏛️',
+    company: 'État de San Andreas', author: DB.govUser.name, date: new Date().toLocaleDateString('fr-FR'),
+    poll: poll, votes: {}
+  });
+  if (DB.announcements.length > 20) DB.announcements.length = 20;
+  closeModal(); toast('Annonce publiée'); goGov('gdash');
+}
 function buildGovNav() {
   const n = document.getElementById('gNav'); n.innerHTML = '';
   [{ s:'Administration' },
@@ -2622,6 +2742,7 @@ function gDash() {
     <button class="btn btn-sm btn-outline" onclick="goGov('gdecree')">📜 Décrets</button>
     <button class="btn btn-sm btn-outline" onclick="goGov('gdefcon')">🚨 DEFCON</button>
     <button class="btn btn-sm btn-outline" onclick="goGov('gvault')">🔒 Coffre-Fort</button>
+    <button class="btn btn-sm btn-outline" onclick="modalGovAnnouncement()" style="border-color:rgba(240,180,41,.3);color:var(--gold)">📣 Annonce</button>
     <button class="btn btn-sm btn-red" onclick="modalChangeGovPass()" style="margin-left:auto">🔑 Changer le Code</button>
   </div></div>`;
   h += `<div class="card"><div class="card-t">📋 Derniers Décrets</div>`;
