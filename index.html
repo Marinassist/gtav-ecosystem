@@ -273,23 +273,30 @@ function getPayload() {
   };
 }
 
+var _lastSave = 0;
 function saveDB() {
   if (_remoteSync) return;
+  _lastSave = Date.now();
   var payload = getPayload();
+  payload._ts = _lastSave;
   // ALWAYS save to localStorage (instant, never fails)
   try { localStorage.setItem('sa_data', JSON.stringify(payload)); } catch(e) {}
-  // Try Supabase via RPC in background
-  if (_saveFails > 5 || !_supabaseOK) return;
+  // Try Supabase via RPC in background — ALWAYS retry, never give up
   if (_saving) { _saveQueued = true; return; }
   _saving = true;
-  sb.rpc('set_shared_state', { new_data: payload, who: DB.user ? DB.user.id : 'anon' })
+  sb.rpc('set_shared_state', { new_data: payload, who: DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon') })
     .then(function(res) {
       _saving = false;
       if (res.error) { _saveFails++; updateSyncBadge('err'); }
-      else { _saveFails = 0; updateSyncBadge('ok'); }
-      if (_saveQueued) { _saveQueued = false; saveDB(); }
+      else { _saveFails = 0; _supabaseOK = true; updateSyncBadge('ok'); }
+      if (_saveQueued) { _saveQueued = false; setTimeout(function(){saveDB()}, 500); }
     })
-    .catch(function() { _saving = false; _saveFails++; });
+    .catch(function() {
+      _saving = false; _saveFails++;
+      updateSyncBadge('err');
+      // Auto-retry after 5 seconds if failed
+      setTimeout(function() { if (_saveQueued || _saveFails > 0) { _saveQueued = false; saveDB(); } }, 5000);
+    });
 }
 
 async function loadFromSupabase() {
@@ -333,12 +340,20 @@ function updateSyncBadge(state) {
   if (!el) {
     el = document.createElement('div');
     el.id = 'syncBadge';
-    el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.6rem;padding:.2rem .5rem;border-radius:4px;z-index:9999;opacity:.7';
+    el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.65rem;padding:.3rem .6rem;border-radius:6px;z-index:9999;cursor:pointer;transition:all .3s';
+    el.onclick = function() { _saveFails=0; saveDB(); toast('Synchronisation forcée...'); };
+    el.title = 'Cliquez pour forcer la synchronisation';
     document.body.appendChild(el);
   }
-  if (state === 'ok') { el.style.background='rgba(34,197,94,.15)'; el.style.color='#22c55e'; el.textContent='🟢 Sync'; }
-  else { el.style.background='rgba(239,68,68,.15)'; el.style.color='#ef4444'; el.textContent='🔴 Local'; }
-  clearTimeout(el._t); el._t = setTimeout(function() { el.textContent = ''; }, 3000);
+  if (state === 'ok') {
+    el.style.background='rgba(34,197,94,.15)'; el.style.color='#22c55e';
+    el.textContent='\u{1F7E2} Sync OK';
+    clearTimeout(el._t); el._t = setTimeout(function() { el.style.opacity='.4'; }, 3000);
+    el.style.opacity='1';
+  } else {
+    el.style.background='rgba(239,68,68,.2)'; el.style.color='#ef4444'; el.style.opacity='1';
+    el.textContent='\u{1F534} Hors ligne (' + _saveFails + ') — Cliquez ici';
+  }
 }
 
 // ============ REALTIME ============
@@ -365,19 +380,33 @@ async function pollForChanges() {
     if (res.error || !res.data) return;
     var d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
     if (!d || !d.citizens) return;
-    // Check for new items
+
+    // Check for new items (compare counts)
     var newMsgs = (d.messages ? d.messages.length : 0) - _notifCounts.msg;
     var newAnns = (d.announcements ? d.announcements.length : 0) - _notifCounts.ann;
     var newDecs = (d.decrees ? d.decrees.length : 0) - _notifCounts.dec;
+
     // Notify
     if (newMsgs > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgs + ' nouveau' + (newMsgs>1?'x':'') + ' message' + (newMsgs>1?'s':'')); }
     else if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
     else if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
-    // Update counts
+
+    // Update notif counts
     _notifCounts.msg = d.messages ? d.messages.length : 0;
     _notifCounts.ann = d.announcements ? d.announcements.length : 0;
     _notifCounts.dec = d.decrees ? d.decrees.length : 0;
-    // Apply data silently
+
+    // ONLY apply remote data if we haven't saved recently
+    // If we saved within last 20 seconds, our local data is newer — skip overwrite
+    var timeSinceSave = Date.now() - _lastSave;
+    if (timeSinceSave < 20000) return;
+
+    // Also skip if remote data is older than our local data
+    var remoteTs = d._ts || 0;
+    var localTs = _lastSave || 0;
+    if (remoteTs <= localTs) return;
+
+    // Safe to apply remote data
     applyRemoteSync(d);
   } catch(e) {}
 }
@@ -430,13 +459,13 @@ function showNotifBanner(text) {
 
 function applyRemoteSync(d) {
   if (!d || !d.citizens) return;
+  // Don't overwrite if we saved recently
+  if (Date.now() - _lastSave < 20000) return;
   _lastSync = Date.now();
   _remoteSync = true;
-  // Update data silently
   Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
   try { localStorage.setItem('sa_data', JSON.stringify(d)); } catch(e) {}
-  // Only update nav badge counts
-  if (DB.user) { try { buildNav(); } catch(e) {} }
+  if (DB.user) { try { loadJob(); buildNav(); } catch(e) {} }
   _remoteSync = false;
 }
 // Helper to get page content without navigation side effects
@@ -1566,14 +1595,17 @@ function addToCart(name, price, qty) {
   var existing = DB.cart.find(function(c){return c.name===name && c.price===price});
   if (existing) existing.qty = (existing.qty||1) + qty;
   else DB.cart.push({name:name, price:price, qty:qty});
-  go('wpos');
+  // Re-render POS without saving to Supabase (cart is local/temporary)
+  var c = document.getElementById('page');
+  if (c) c.innerHTML = pWPos();
 }
 function changeQty(idx, delta) {
   var item = DB.cart[idx];
   if (!item) return;
   item.qty = (item.qty||1) + delta;
   if (item.qty <= 0) DB.cart.splice(idx, 1);
-  go('wpos');
+  var c = document.getElementById('page');
+  if (c) c.innerHTML = pWPos();
 }
 function doCheckout() {
   var j = DB.job;
@@ -3929,22 +3961,35 @@ function createVote() {
   }
 
   // 7. Ready
-  if (statusEl) statusEl.innerHTML = (_supabaseOK ? '🟢' : '🟡') + ' ' + DB.citizens.length + ' citoyens — ' + DB.enterprises.length + ' entreprises';
-  console.log('🏛️ San Andreas prêt — ' + DB.citizens.length + ' citoyens');
+  if (statusEl) statusEl.innerHTML = (_supabaseOK ? '\u{1F7E2}' : '\u{1F7E1}') + ' ' + DB.citizens.length + ' citoyens \u2014 ' + DB.enterprises.length + ' entreprises';
+  console.log('\u{1F3DB}\u{FE0F} San Andreas pr\u00EAt \u2014 ' + DB.citizens.length + ' citoyens');
 
-  // 8. Background: check if Supabase has newer data
-  if (loaded && !_supabaseOK) {
-    setTimeout(async function() {
-      try {
-        var sbLoaded = await loadFromSupabase();
-        if (sbLoaded && DB.citizens.length > 0) {
-          saveDB();
-          var s = document.getElementById('connStatus');
-          if (s) s.innerHTML = '🟢 Synchronisé — ' + DB.citizens.length + ' citoyens';
+  // 8. Background: verify Supabase connection and sync
+  setTimeout(async function() {
+    try {
+      // Test RPC connectivity
+      var testRes = await sb.rpc('get_shared_state');
+      if (!testRes.error) {
+        _supabaseOK = true;
+        updateSyncBadge('ok');
+        console.log('\u{1F7E2} Supabase connect\u00E9');
+        // If we have local data, push it to Supabase
+        if (DB.citizens.length > 0) { saveDB(); }
+        // If Supabase has data and we don't, pull it
+        if (testRes.data && testRes.data.citizens && testRes.data.citizens.length > DB.citizens.length) {
+          applyRemoteSync(testRes.data);
         }
-      } catch(e) {}
-    }, 2000);
-  }
+        var s = document.getElementById('connStatus');
+        if (s) s.innerHTML = '\u{1F7E2} Connect\u00E9 \u2014 ' + DB.citizens.length + ' citoyens';
+      } else {
+        updateSyncBadge('err');
+        console.log('\u{1F534} Supabase erreur:', testRes.error.message);
+      }
+    } catch(e) {
+      updateSyncBadge('err');
+      console.log('\u{1F534} Supabase injoignable');
+    }
+  }, 2000);
 })();
 </script>
 </body>
