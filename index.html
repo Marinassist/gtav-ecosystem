@@ -260,6 +260,61 @@ let _saveQueued = false;
 let _remoteSync = false;
 let _saveFails = 0;
 let _supabaseOK = false;
+let _useKV = false;
+let _kvTimestamps = {};
+
+// ============ PER-ENTERPRISE STORAGE (shared_kv) ============
+async function detectKV() {
+  try { var r = await sb.from('shared_kv').select('key').limit(1); return !r.error; }
+  catch(e) { return false; }
+}
+async function saveEntKV(entName, data) {
+  try {
+    var who = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
+    var r = await sb.from('shared_kv').upsert({ key: 'job:' + entName, data: data, updated_at: new Date().toISOString(), updated_by: who });
+    return !r.error;
+  } catch(e) { return false; }
+}
+async function deleteEntKV(entName) {
+  try { await sb.from('shared_kv').delete().eq('key', 'job:' + entName); } catch(e) {}
+}
+async function loadEntsKV() {
+  try {
+    var r = await sb.from('shared_kv').select('key,data,updated_at').like('key', 'job:%');
+    if (r.error || !r.data || !r.data.length) return false;
+    r.data.forEach(function(row) {
+      var entName = row.key.substring(4);
+      DB.allJobs[entName] = row.data;
+      _kvTimestamps[entName] = row.updated_at;
+    });
+    return true;
+  } catch(e) { return false; }
+}
+async function pollEntsKV() {
+  try {
+    var r = await sb.from('shared_kv').select('key,data,updated_at,updated_by').like('key', 'job:%');
+    if (r.error || !r.data) return;
+    var myEnt = DB.user && DB.user.job ? DB.user.job : '';
+    var myId = DB.user ? DB.user.id : '';
+    var recentSave = (Date.now() - _lastSave < 20000);
+    r.data.forEach(function(row) {
+      var entName = row.key.substring(4);
+      if (row.updated_at === _kvTimestamps[entName]) return; // unchanged
+      _kvTimestamps[entName] = row.updated_at;
+      if (entName === myEnt && recentSave && row.updated_by === myId) return; // my own save
+      if (entName === myEnt && recentSave) {
+        // Accept employee/grade changes (gov decisions) but protect my work data
+        if (DB.allJobs[entName] && row.data) {
+          DB.allJobs[entName].employees = row.data.employees;
+          DB.allJobs[entName].grades = row.data.grades;
+          DB.allJobs[entName].pendingApps = row.data.pendingApps;
+        }
+        return;
+      }
+      DB.allJobs[entName] = row.data;
+    });
+  } catch(e) {}
+}
 
 function getPayload() {
   return {
@@ -279,36 +334,73 @@ function saveDB() {
   _lastSave = Date.now();
   var payload = getPayload();
   payload._ts = _lastSave;
-  // ALWAYS save to localStorage (instant, never fails)
+  // ALWAYS save to localStorage (instant, full state including allJobs)
   try { localStorage.setItem('sa_data', JSON.stringify(payload)); } catch(e) {}
-  // Try Supabase via RPC in background — ALWAYS retry, never give up
+  // Try Supabase in background
   if (_saving) { _saveQueued = true; return; }
   _saving = true;
-  sb.rpc('set_shared_state', { new_data: payload, who: DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon') })
-    .then(function(res) {
-      _saving = false;
-      if (res.error) { _saveFails++; updateSyncBadge('err'); }
-      else { _saveFails = 0; _supabaseOK = true; updateSyncBadge('ok'); }
-      if (_saveQueued) { _saveQueued = false; setTimeout(function(){saveDB()}, 500); }
-    })
-    .catch(function() {
-      _saving = false; _saveFails++;
-      updateSyncBadge('err');
-      // Auto-retry after 5 seconds if failed
-      setTimeout(function() { if (_saveQueued || _saveFails > 0) { _saveQueued = false; saveDB(); } }, 5000);
-    });
+  var who = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
+
+  // Build core payload — if using KV, strip allJobs from core (each enterprise is separate)
+  var corePayload = payload;
+  if (_useKV) {
+    corePayload = JSON.parse(JSON.stringify(payload));
+    delete corePayload.allJobs;
+  }
+
+  // 1) Save core to shared_state via RPC
+  var coreP = sb.rpc('set_shared_state', { new_data: corePayload, who: who })
+    .then(function(res) { return !res.error; }).catch(function() { return false; });
+
+  // 2) Save enterprise(s) to shared_kv (per-enterprise, no collision)
+  var entPs = [];
+  if (_useKV) {
+    var myEnt = DB.user && DB.user.job ? DB.user.job : '';
+    if (myEnt && DB.allJobs[myEnt]) {
+      entPs.push(saveEntKV(myEnt, DB.allJobs[myEnt]));
+    }
+    // Gov saves ALL enterprises
+    if (DB.govUser) {
+      Object.keys(DB.allJobs).forEach(function(entName) {
+        if (entName !== myEnt) entPs.push(saveEntKV(entName, DB.allJobs[entName]));
+      });
+    }
+  }
+
+  Promise.all([coreP].concat(entPs)).then(function(results) {
+    _saving = false;
+    if (results.every(function(r){return r})) { _saveFails = 0; _supabaseOK = true; updateSyncBadge('ok'); }
+    else { _saveFails++; updateSyncBadge('err'); }
+    if (_saveQueued) { _saveQueued = false; setTimeout(function(){saveDB()}, 500); }
+  }).catch(function() {
+    _saving = false; _saveFails++;
+    updateSyncBadge('err');
+    setTimeout(function() { if (_saveQueued || _saveFails > 0) { _saveQueued = false; saveDB(); } }, 5000);
+  });
 }
 
 async function loadFromSupabase() {
   try {
+    // 1. Load core from shared_state via RPC
     var res = await sb.rpc('get_shared_state');
     if (!res.error && res.data && typeof res.data === 'object' && res.data.citizens) {
       var d = res.data;
       Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
       _supabaseOK = true;
+
+      // 2. Try loading per-enterprise data from shared_kv (overrides allJobs from core)
+      if (_useKV) {
+        var kvLoaded = await loadEntsKV();
+        if (!kvLoaded && d.allJobs) {
+          // Migration: shared_kv exists but empty, shared_state has allJobs → migrate
+          DB.allJobs = d.allJobs;
+          Object.keys(DB.allJobs).forEach(function(entName) { saveEntKV(entName, DB.allJobs[entName]); });
+          console.log('Migration entreprises vers shared_kv');
+        }
+      }
       return true;
     }
-    if (!res.error) _supabaseOK = true; // RPC works but empty
+    if (!res.error) _supabaseOK = true;
     return false;
   } catch(e) {
     return false;
@@ -419,6 +511,14 @@ async function pollForChanges() {
 
     // Always merge remote data (smart merge protects local work data)
     applyRemoteSync(d);
+
+    // 2. Poll per-enterprise data from shared_kv (isolated, no collision)
+    if (_useKV) {
+      await pollEntsKV();
+      // Re-render and update localStorage with merged data
+      try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
+      if (DB.user) { try { loadJob(); } catch(e) {} }
+    }
   } catch(e) {}
 }
 // ============ NOTIFICATION SOUND ============
@@ -524,8 +624,9 @@ function applyRemoteSync(d) {
   if (d.citizenSalaries) DB.citizenSalaries = d.citizenSalaries;
   if (d.tempPatients) DB.tempPatients = d.tempPatients;
 
-  // allJobs: merge carefully — accept remote employee lists & grades, but protect local work data if saved recently
-  if (d.allJobs) {
+  // allJobs: SKIP if using per-enterprise KV storage (enterprises are synced via shared_kv)
+  // Only merge from shared_state if we're NOT using KV (backward compat)
+  if (d.allJobs && !_useKV) {
     Object.keys(d.allJobs).forEach(function(entName) {
       var remote = d.allJobs[entName];
       var local = DB.allJobs[entName];
@@ -3431,6 +3532,7 @@ function saveEditEnt(idx) {
     DB.allJobs[newName].company = newName;
     DB.allJobs[newName].icon = newIco;
     delete DB.allJobs[oldName];
+    if (_useKV) deleteEntKV(oldName); // clean up old key in shared_kv
     // Update citizens who work there
     DB.citizens.forEach(function(c) { if (c.job === oldName) c.job = newName; });
     // Update job offers
@@ -3449,6 +3551,7 @@ function delEnterprise(idx) {
         if (cit) { cit.job = null; cit.role = null; }
       });
       delete DB.allJobs[e.name];
+      if (_useKV) deleteEntKV(e.name); // clean up in shared_kv
     }
     DB.enterprises.splice(idx, 1);
     toast('Entreprise supprimée');
@@ -4071,6 +4174,10 @@ function createVote() {
   var loaded = loadFromLocal();
   if (loaded) console.log('⚡ Loaded from localStorage');
 
+  // 1b. Detect per-enterprise storage (shared_kv table)
+  try { _useKV = await Promise.race([detectKV(), new Promise(function(r){setTimeout(function(){r(false)},2000)})]); } catch(e) { _useKV = false; }
+  if (_useKV) console.log('✅ Stockage par entreprise actif (shared_kv)');
+
   // 2. If no local data, try Supabase (3s max)
   if (!loaded) {
     try {
@@ -4085,6 +4192,11 @@ function createVote() {
   if (!loaded) {
     initAllJobs();
     console.log('🆕 Données initialisées');
+  }
+
+  // 3b. Sync enterprises from shared_kv (even if localStorage loaded — get latest from other players)
+  if (_useKV && loaded) {
+    try { await Promise.race([loadEntsKV(), new Promise(function(r){setTimeout(function(){r(false)},3000)})]); } catch(e) {}
   }
 
   // 4. Save to both (localStorage instant + Supabase background)
