@@ -2124,12 +2124,15 @@ function pWPos() {
       h += '</div>';
     });
     var sub = DB.cart.reduce(function(s,c){return s+c.price*(c.qty||1)},0);
-    var tva = Math.round(sub*DB.taxConfig.tva/100);
+    var hasTVA = DB.job.tvaEnabled !== false;
+    var tva = hasTVA ? Math.round(sub*DB.taxConfig.tva/100) : 0;
+    var total = sub + tva;
     h += '<div style="margin-top:.6rem;padding-top:.6rem;border-top:2px solid rgba(240,180,41,.2)">';
     h += '<div style="display:flex;justify-content:space-between;font-size:.85rem;color:var(--t2)"><span>Sous-total</span><span>$' + sub.toLocaleString() + '</span></div>';
-    h += '<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--t3)"><span>TVA (' + DB.taxConfig.tva + '%)</span><span>$' + tva + '</span></div>';
-    h += '<div style="display:flex;justify-content:space-between;font-family:Rajdhani,sans-serif;font-weight:700;font-size:1.3rem;color:var(--gold);margin-top:.3rem"><span>TOTAL</span><span>$' + (sub+tva).toLocaleString() + '</span></div></div>';
-    h += '<div style="display:flex;gap:.4rem;margin-top:.8rem"><button class="btn btn-green" style="flex:1;padding:.7rem" onclick="doCheckout()">\u{1F4B3} Encaisser $' + (sub+tva).toLocaleString() + '</button><button class="btn btn-outline" onclick="DB.cart=[];go(\'wpos\')">\u{1F5D1}\u{FE0F}</button></div>';
+    if (hasTVA) h += '<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--t3)"><span>TVA (' + DB.taxConfig.tva + '%)</span><span>$' + tva + '</span></div>';
+    else h += '<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--t3)"><span>TVA</span><span style="color:var(--green)">Exonéré</span></div>';
+    h += '<div style="display:flex;justify-content:space-between;font-family:Rajdhani,sans-serif;font-weight:700;font-size:1.3rem;color:var(--gold);margin-top:.3rem"><span>TOTAL</span><span>$' + total.toLocaleString() + '</span></div></div>';
+    h += '<div style="display:flex;gap:.4rem;margin-top:.8rem"><button class="btn btn-green" style="flex:1;padding:.7rem" onclick="doCheckout()">\u{1F4B3} Encaisser $' + total.toLocaleString() + '</button><button class="btn btn-outline" onclick="DB.cart=[];go(\'wpos\')">\u{1F5D1}\u{FE0F}</button></div>';
   }
   h += '</div>';
   h += '<div class="card"><div class="card-t">\u{1F4CA} Dernières Factures</div>';
@@ -2159,7 +2162,8 @@ function changeQty(idx, delta) {
 function doCheckout() {
   var j = DB.job;
   var sub = DB.cart.reduce(function(s,c){return s+c.price*(c.qty||1)},0);
-  var tva = Math.round(sub * DB.taxConfig.tva / 100);
+  var hasTVA = DB.job.tvaEnabled !== false;
+  var tva = hasTVA ? Math.round(sub * DB.taxConfig.tva / 100) : 0;
   var itemNames = [];
   DB.cart.forEach(function(c) { var q = c.qty||1; itemNames.push(q > 1 ? c.name + ' x' + q : c.name); });
 // Record invoice
@@ -2170,6 +2174,12 @@ function doCheckout() {
     time: new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})
   };
   j.invoices.unshift(inv);
+
+  // Mettre à jour le solde bancaire automatiquement
+  if (!j.bankBalance && j.bankBalance !== 0) j.bankBalance = 0;
+  j.bankBalance += (sub + tva);
+  if (!j.comptaHistory) j.comptaHistory = [];
+  j.comptaHistory.unshift({id:Date.now(), date:inv.date, desc:'Facture: ' + itemNames.join(', '), amount:sub+tva, type:'in'});
 
   // Update current week data
   if (j.weeklyHistory.length) {
@@ -2422,7 +2432,7 @@ function pWCompta() {
   h += '<div class="stat"><div class="stat-l">CA Semaine</div><div class="stat-v" style="color:var(--green)">$' + totalCA.toLocaleString() + '</div><div class="stat-s">' + j.invoices.length + ' factures</div></div>';
   h += '<div class="stat"><div class="stat-l">Dépenses</div><div class="stat-v" style="color:var(--red)">$' + totalExpenses.toLocaleString() + '</div></div>';
   h += '<div class="stat"><div class="stat-l">Bénéfice Net</div><div class="stat-v" style="color:' + (net >= 0 ? 'var(--gold)' : 'var(--red)') + '">$' + net.toLocaleString() + '</div></div>';
-  h += '<div class="stat"><div class="stat-l">TVA Collectée</div><div class="stat-v" style="color:var(--orange)">$' + totalTVA.toLocaleString() + '</div></div>';
+  h += '<div class="stat"><div class="stat-l">TVA Collectée</div><div class="stat-v" style="color:var(--orange)">' + (j.tvaEnabled!==false ? '$'+totalTVA.toLocaleString() : 'Exonéré') + '</div></div>';
   h += '</div>';
 
   // Tabs
@@ -2511,7 +2521,7 @@ function pWCompta() {
     h += '<div class="card"><div class="card-t" style="justify-content:space-between">\u{1F4B8} Charges de l\'Entreprise <button class="btn btn-sm btn-blue" onclick="modalAddCompanyExpense()">+ Ajouter</button></div>';
     h += '<table><thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Montant</th><th>Récurrent</th><th></th></tr></thead><tbody>';
     j.companyExpenses.forEach(function(e,i) {
-      h += '<tr><td style="font-size:.8rem">' + e.date + '</td><td><span class="badge b-purple">' + e.type + '</span></td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">$' + e.amount.toLocaleString() + '</td><td>' + (e.recurring ? '<span class="badge b-blue">Mensuel</span>' : '<span class="badge b-orange">Ponctuel</span>') + '</td><td><button class="btn btn-sm btn-red" onclick="DB.job.companyExpenses.splice(' + i + ',1);markDirty(\'enterprise_data\');toast(\'Charge supprimée\');go(\'wcompta\')" style="padding:.2rem .4rem">\u2715</button></td></tr>';
+      h += '<tr><td style="font-size:.8rem">' + e.date + '</td><td><span class="badge b-purple">' + e.type + '</span></td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">$' + e.amount.toLocaleString() + '</td><td>' + (e.recurring ? '<span class="badge b-blue">Mensuel</span>' : '<span class="badge b-orange">Ponctuel</span>') + '</td><td><button class="btn btn-sm btn-red" onclick="var _de=DB.job.companyExpenses[' + i + '];DB.job.companyExpenses.splice(' + i + ',1);if(_de&&DB.job.bankBalance!==undefined)DB.job.bankBalance+=_de.amount;markDirty(\'enterprise_data\');toast(\'Charge supprimée — $\'+(_de?_de.amount:0)+\' restauré\');go(\'wcompta\')" style="padding:.2rem .4rem">\u2715</button></td></tr>';
     });
     h += '</tbody></table>';
     var recurr = j.companyExpenses.filter(function(e){return e.recurring}).reduce(function(s,e){return s+e.amount},0);
@@ -2529,7 +2539,7 @@ function pWCompta() {
       h += '<div><div style="font-weight:600;font-size:.88rem">' + e.empName + ' <span class="badge b-blue">' + e.type + '</span></div>';
       h += '<div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">' + e.desc + ' \u2014 ' + e.date + '</div></div>';
       h += '<div style="display:flex;align-items:center;gap:.5rem"><span class="mono" style="font-size:.95rem;color:var(--red)">$' + e.amount + '</span>';
-      h += '<button class="btn btn-sm btn-green" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'approved\';markDirty(\'enterprise_data\');toast(\'Approuvé\');go(\'wcompta\')">\u2713</button>';
+      h += '<button class="btn btn-sm btn-green" onclick="var _ea=DB.job.employeeExpenses[' + realIdx + '];_ea.status=\'approved\';if(!DB.job.bankBalance&&DB.job.bankBalance!==0)DB.job.bankBalance=0;DB.job.bankBalance-=_ea.amount;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString(\'fr-FR\'),desc:\'Frais approuvé: \'+_ea.desc,amount:_ea.amount,type:\'out\'});markDirty(\'enterprise_data\');toast(\'Approuvé — $\'+_ea.amount+\' déduit\');go(\'wcompta\')">\u2713</button>';
       h += '<button class="btn btn-sm btn-red" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'rejected\';markDirty(\'enterprise_data\');toast(\'Refusé\');go(\'wcompta\')">\u2715</button></div></div>';
     });
     h += '</div>';
@@ -2629,7 +2639,7 @@ function modalAddCompanyExpense() {
     <div class="row"><div class="fg"><label>Type</label><select id="ceType"><option>Loyer</option><option>Assurance</option><option>Électricité</option><option>Eau</option><option>Réparation</option><option>Fournitures</option><option>Marketing</option><option>Juridique</option><option>Autre</option></select></div><div class="fg"><label>Montant ($)</label><input type="number" id="ceAmt" placeholder="0"></div></div>
     <div class="fg"><label>Description</label><input id="ceDesc" placeholder="Détail de la dépense"></div>
     <div class="fg"><label style="display:flex;align-items:center;gap:.4rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ceRecur"> Charge récurrente (mensuelle)</label></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});markDirty('enterprise_data');closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});if(!DB.job.bankBalance&&DB.job.bankBalance!==0)DB.job.bankBalance=0;DB.job.bankBalance-=a;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString('fr-FR'),desc:'Charge: '+(document.getElementById('ceDesc').value||document.getElementById('ceType').value),amount:a,type:'out'});markDirty('enterprise_data');closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
 }
 
 function payWeeklySalaries() {
@@ -2738,7 +2748,8 @@ function previewTax() {
   const net = Math.max(0, ca - exp);
   let tax = 0;
   DB.taxConfig.tranches.forEach(t => { if(net>t.min){const taxable=Math.min(net,t.max)-t.min;if(taxable>0)tax+=Math.round(taxable*t.rate/100)} });
-  const tva = Math.round(ca * DB.taxConfig.tva / 100);
+  const hasTVA = DB.job.tvaEnabled !== false;
+  const tva = hasTVA ? Math.round(ca * DB.taxConfig.tva / 100) : 0;
   document.getElementById('taxCalcResult').innerHTML = `<div class="stats"><div class="stat"><div class="stat-l">Impôt Progressif</div><div class="stat-v" style="color:var(--gold);font-size:1.2rem">$${tax.toLocaleString()}</div></div><div class="stat"><div class="stat-l">TVA (${DB.taxConfig.tva}%)</div><div class="stat-v" style="color:var(--orange);font-size:1.2rem">$${tva.toLocaleString()}</div></div><div class="stat"><div class="stat-l">Total à payer</div><div class="stat-v" style="color:var(--red);font-size:1.2rem">$${(tax+tva).toLocaleString()}</div></div></div>`;
 }
 
@@ -2749,7 +2760,7 @@ function sendTaxDeclaration() {
   const net = Math.max(0, ca - exp);
   let tax = 0;
   DB.taxConfig.tranches.forEach(t => { if(net>t.min){const taxable=Math.min(net,t.max)-t.min;if(taxable>0)tax+=Math.round(taxable*t.rate/100)} });
-  const tva = Math.round(ca * DB.taxConfig.tva / 100);
+  const tva = (DB.job.tvaEnabled !== false) ? Math.round(ca * DB.taxConfig.tva / 100) : 0;
   const period = 'Q1 2026';
   const date = new Date().toLocaleDateString('fr-FR');
 
@@ -3214,13 +3225,13 @@ function pWArticles() {
   const items = DB.job.pos;
 
   let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
-    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏷️ Articles de la Caisse</h1><p style="color:var(--t2);font-size:.82rem">${items.length} articles — TVA ${DB.taxConfig.tva}%</p></div>
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏷️ Articles de la Caisse</h1><p style="color:var(--t2);font-size:.82rem">${items.length} articles — ${DB.job.tvaEnabled!==false?'TVA '+DB.taxConfig.tva+'%':'TVA exonérée'}</p></div>
     <button class="btn btn-sm btn-blue" onclick="modalAddArticle2()">+ Nouvel Article</button>
   </div>`;
 
   h += '<div class="card"><table><thead><tr><th></th><th>Article</th><th>Prix HT</th><th>Prix TTC</th><th>Actions</th></tr></thead><tbody>';
   items.forEach((it,i) => {
-    const ttc = it.price + Math.round(it.price * DB.taxConfig.tva / 100);
+    const ttc = DB.job.tvaEnabled!==false ? it.price + Math.round(it.price * DB.taxConfig.tva / 100) : it.price;
     h += `<tr>
       <td style="font-size:1.3rem">${it.emoji}</td>
       <td style="font-weight:600">${it.name}</td>
@@ -3510,6 +3521,7 @@ function saveGradeEdit(idx) {
 function pWInfo() {
   if (!DB.job) return '';
   var j = DB.job;
+  if (j.tvaEnabled === undefined) j.tvaEnabled = true;
   if (!j.info) j.info = {rib:'', iban:'', bic:'', siret:'', address:'', phone:'', email:'', notes:''};
   var inf = j.info;
   var h = '<div style="margin-bottom:1rem"><h1 style="font-family:Rajdhani,sans-serif;font-size:1.5rem;font-weight:700">\u{1F3E6} Infos Entreprise</h1><p style="color:var(--t2);font-size:.82rem">' + j.icon + ' ' + j.company + '</p></div>';
@@ -3538,7 +3550,17 @@ function pWInfo() {
   else h += '<p style="color:var(--t3);font-size:.83rem">Aucune note. Cliquez Modifier pour ajouter des informations.</p>';
   h += '</div>';
 
-  return h;
+  
+  // TVA toggle
+  h += '<div class="card" style="border-color:rgba(240,180,41,.2)"><div class="card-t">💰 TVA — Taxe sur la Valeur Ajoutée</div>';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:8px">';
+  h += '<div><div style="font-weight:600;font-size:.88rem">TVA sur les ventes</div><div style="font-size:.75rem;color:var(--t3)">Taux actuel: ' + DB.taxConfig.tva + '% — Appliqué sur chaque facture en caisse</div></div>';
+  h += '<div style="display:flex;align-items:center;gap:.6rem">';
+  h += '<span style="font-size:.82rem;font-weight:600;color:' + (j.tvaEnabled!==false ? 'var(--green)' : 'var(--red)') + '">' + (j.tvaEnabled!==false ? 'Activée' : 'Désactivée') + '</span>';
+  h += '<div onclick="DB.job.tvaEnabled=!DB.job.tvaEnabled;markDirty(\'enterprise_data\');go(\'winfo\')" style="cursor:pointer;width:44px;height:24px;border-radius:12px;background:' + (j.tvaEnabled!==false ? 'var(--green)' : 'var(--t3)') + ';position:relative;transition:background .2s"><div style="position:absolute;top:2px;' + (j.tvaEnabled!==false ? 'left:22px' : 'left:2px') + ';width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></div></div>';
+  h += '</div></div></div>';
+
+return h;
 }
 function modalEditEntInfo() {
   var inf = DB.job.info || {rib:'',iban:'',bic:'',siret:'',address:'',phone:'',email:'',notes:''};
