@@ -1103,7 +1103,7 @@ function initAllJobs() {
   DB.allJobs = {};
   // Ensure all registered enterprises have job data
   DB.enterprises.forEach(function(ent) {
-    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon);
+    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon, ent.type);
   });
 }
 
@@ -1115,7 +1115,7 @@ function loadJob() {
   // Auto-create allJobs entry if enterprise exists but has no job data
   if (!DB.allJobs[citizen.job]) {
     const ent = DB.enterprises.find(e => e.name === citizen.job);
-    if (ent) createEnterpriseData(citizen.job, ent.icon);
+    if (ent) createEnterpriseData(citizen.job, ent.icon, ent.type);
     else { DB.job = null; return; }
   }
   const jobData = DB.allJobs[citizen.job];
@@ -1137,10 +1137,26 @@ function loadJob() {
 }
 
 // Create new enterprise data structure (called by gov createEnt)
-function createEnterpriseData(name, icon) {
+function createEnterpriseData(name, icon, type) {
+  var isSAMS = (type === 'SAMS' || name === 'SAMS');
+  var isLSPD = (type === 'LSPD' || name === 'LSPD');
+  var isGov = (type === 'Gouvernement' || name === 'Gouvernement');
+  var isMedia = (type === 'Média' || name.indexOf('Weazel') >= 0 || name.indexOf('News') >= 0);
   DB.allJobs[name] = {
     company: name, icon: icon || '🏢',
-    grades: [
+    grades: isSAMS ? [
+      {name:'Directeur SAMS',payType:'fixe',fixe:3000,commission:0,prime:500,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:true},
+      {name:'Médecin',payType:'fixe',fixe:2000,commission:0,prime:200,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:true},
+      {name:'Ambulancier',payType:'fixe',fixe:1200,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:true},
+    ] : isLSPD ? [
+      {name:'Chef LSPD',payType:'fixe',fixe:3500,commission:0,prime:500,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
+      {name:'Lieutenant',payType:'fixe',fixe:2500,commission:0,prime:300,canManage:true,canHire:true,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:false},
+      {name:'Officier',payType:'fixe',fixe:1800,commission:0,prime:100,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
+      {name:'Cadet',payType:'fixe',fixe:1200,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:false,canPatients:false},
+    ] : isGov ? [
+      {name:'Gouverneur',payType:'fixe',fixe:5000,commission:0,prime:0,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
+      {name:'Secrétaire',payType:'fixe',fixe:2000,commission:0,prime:0,canManage:true,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
+    ] : [
       {name:'Patron',payType:'both',fixe:2000,commission:15,prime:300,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
       {name:'Employé',payType:'fixe',fixe:1000,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
     ],
@@ -3882,7 +3898,7 @@ function modalCreateEnt() {
   const citOpts = '<option value="">— Aucun patron pour le moment —</option>' + DB.citizens.map(c => `<option value="${c.id}">${c.name} (${c.id})${c.job?' — '+c.job:''}</option>`).join('');
   modal(`<div class="modal-t">🏢 Créer une Entreprise</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="ceNom" placeholder="Nom de l'entreprise"></div><div class="fg"><label>Icône</label><input id="ceIco" placeholder="🏢" value="🏢" style="width:60px"></div></div>
-    <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Services Administratifs</option><option>Gouvernement</option><option>LSPD</option><option>SAMS</option><option>Autre</option></select></div>
+    <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Services Administratifs</option><option>Gouvernement</option><option>LSPD</option><option>SAMS</option><option>Avocat</option><option>Superette</option><option>Bar / Club</option><option>Média</option><option>Autre</option></select></div>
     <div class="fg"><label>👔 Patron (optionnel)</label><select id="cePatronId">${citOpts}</select></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="createEnt()">Créer</button></div>`);
 }
@@ -3893,7 +3909,7 @@ function createEnt() {
   const ico = document.getElementById('ceIco').value||'🏢';
   const cit = pid ? DB.citizens.find(c=>c.id===pid) : null;
   DB.enterprises.push({id:'ENT-'+String(DB.enterprises.length+1).padStart(3,'0'), name:n, icon:ico, type:document.getElementById('ceType').value, patron:cit?cit.name:'', patronId:pid||'', status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:cit?1:0});
-  createEnterpriseData(n, ico);
+  createEnterpriseData(n, ico, document.getElementById('ceType').value);
   if (cit) {
     cit.job = n; cit.role = 'Patron';
     DB.allJobs[n].employees.push({id:cit.id, name:cit.name, grade:0, phone:cit.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
@@ -3903,7 +3919,7 @@ function createEnt() {
 }
 function modalEditEnt(idx) {
   const e = DB.enterprises[idx];
-  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Services Administratifs','Gouvernement','LSPD','SAMS','Autre'];
+  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Services Administratifs','Gouvernement','LSPD','SAMS','Avocat','Superette','Bar / Club','Média','Autre'];
   const typeOpts = types.map(function(t){return '<option '+(t===e.type?'selected':'')+'>'+t+'</option>'}).join('');
   modal(`<div class="modal-t">✏️ Modifier — ${e.icon} ${e.name}</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="eeNom" value="${e.name}"></div><div class="fg"><label>Icône</label><input id="eeIco" value="${e.icon}" style="width:60px"></div></div>
@@ -4602,18 +4618,38 @@ function createVote() {
     return;
   }
 
-  // 3. Si tables vides → première initialisation
-  if (!loaded) {
+  // 3. Si tables vides → première initialisation avec entreprises par défaut
+  if (!loaded || DB.enterprises.length === 0) {
+    // Créer les entreprises de San Andreas
+    var defaultEnts = [
+      {id:'ENT-001', name:'Gouvernement', icon:'🏛️', type:'Gouvernement'},
+      {id:'ENT-002', name:'LSPD', icon:'🚔', type:'LSPD'},
+      {id:'ENT-003', name:'SAMS', icon:'🚑', type:'SAMS'},
+      {id:'ENT-004', name:'Burger Shot', icon:'🍔', type:'Restauration'},
+      {id:'ENT-005', name:'Sterling & Associés', icon:'⚖️', type:'Avocat'},
+      {id:'ENT-006', name:'Dynasty', icon:'🏠', type:'Immobilier'},
+      {id:'ENT-007', name:'CM Mecano', icon:'🔧', type:'Mécanique'},
+      {id:'ENT-008', name:'Auto Exotic', icon:'🏎️', type:'Mécanique'},
+      {id:'ENT-009', name:'LTD Little Seoul', icon:'🏪', type:'Superette'},
+      {id:'ENT-010', name:'LTD Mirror Park', icon:'🏪', type:'Superette'},
+      {id:'ENT-011', name:'Tequilala', icon:'🍸', type:'Bar / Club'},
+      {id:'ENT-012', name:'Bahamas', icon:'🎵', type:'Divertissement'},
+      {id:'ENT-013', name:'Downtown Cab Co', icon:'🚕', type:'Transport'},
+      {id:'ENT-014', name:'Weazel News', icon:'📺', type:'Média'},
+    ];
+    defaultEnts.forEach(function(e) {
+      DB.enterprises.push({id:e.id, name:e.name, icon:e.icon, type:e.type, patron:'', patronId:'', status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:0});
+      createEnterpriseData(e.name, e.icon, e.type);
+    });
     initAllJobs();
-    // Sauvegarder la structure initiale dans les tables
-    markDirty('gov_budget', 'tax_config', 'defcon_state');
+    markDirty('enterprises','enterprise_data','gov_budget','tax_config','defcon_state');
     await flushDirty();
-    console.log('🆕 Première initialisation (tables individuelles)');
+    console.log('🆕 Première initialisation — ' + defaultEnts.length + ' entreprises créées');
   }
 
   // 4. S'assurer que allJobs est initialisé pour les entreprises existantes
   DB.enterprises.forEach(function(ent) {
-    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon);
+    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon, ent.type);
   });
 
   // 5. Démarrer le polling temps réel
