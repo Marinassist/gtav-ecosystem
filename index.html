@@ -381,6 +381,9 @@ async function _saveOneEnterpriseData(entName, who, ts) {
     stock: d.stock, internal_messages: d.internalMessages,
     hr_records: d.hrRecords, service_log: d.serviceLog,
     info: d.info || {},
+    bank_balance: d.bankBalance || 0,
+    compta_history: d.comptaHistory || [],
+    compta_weeks: d.comptaWeeks || [],
     updated_at: ts, updated_by: who
   };
   var res = await sb.from('enterprise_data').upsert(row, { onConflict:'enterprise_name' });
@@ -418,19 +421,12 @@ async function _saveLaws(who, ts) {
 }
 
 async function _saveVoted(who, ts) {
+  var cid = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : '');
+  if (!cid) return;
   var rows = [];
   Object.keys(DB.voted).forEach(function(lawId) {
     var v = DB.voted[lawId];
-    if (typeof v === 'string') {
-      // Old format: voted[lawId] = choice (for current user)
-      var cid = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : '');
-      if (cid) rows.push({ citizen_id:cid, law_id:parseInt(lawId), choice:v });
-    } else if (typeof v === 'object') {
-      // Extended format
-      Object.keys(v).forEach(function(cid) {
-        rows.push({ citizen_id:cid, law_id:parseInt(lawId), choice:v[cid] });
-      });
-    }
+    if (v) rows.push({ citizen_id:cid, law_id:parseInt(lawId), choice:String(v) });
   });
   if (rows.length) {
     var res = await sb.from('voted').upsert(rows, { onConflict:'citizen_id,law_id' });
@@ -624,6 +620,9 @@ async function loadFromSupabase() {
           hrRecords: d.hr_records || [],
           serviceLog: d.service_log || [],
           info: d.info || {},
+          bankBalance: parseFloat(d.bank_balance) || 0,
+          comptaHistory: d.compta_history || [],
+          comptaWeeks: d.compta_weeks || [],
         };
       });
     }
@@ -649,11 +648,13 @@ async function loadFromSupabase() {
       });
     }
 
-    // Voted
+    // Voted (charger uniquement les votes du citoyen connecté)
     if (results[7].data) {
       DB.voted = {};
+      var sessionCid = null;
+      try { var sess = JSON.parse(localStorage.getItem('sa_session')); if (sess) sessionCid = sess.id; } catch(e) {}
       results[7].data.forEach(function(v) {
-        DB.voted[v.law_id] = v.choice;
+        if (!sessionCid || v.citizen_id === sessionCid) DB.voted[v.law_id] = v.choice;
       });
     }
 
@@ -801,7 +802,7 @@ var _lastSync = 0;
 var _notifCounts = {msg:0, ann:0, dec:0};
 
 function setupRealtime() {
-  _notifCounts = {msg: DB.messages ? DB.messages.length : 0, ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
+  _notifCounts = {msg: countMyUnread(), ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
   // Polling toutes les 10s — lit les tables individuelles
   setInterval(function() { pollForChanges(); }, 10000);
 }
@@ -838,11 +839,13 @@ async function pollForChanges() {
       });
       var myEnt = '';
       if (myId) { var myCit = DB.citizens.find(function(c){return c.id===myId}); if (myCit) myEnt = myCit.job || ''; }
-      var remoteMyMsgs = 0, localMyMsgs = 0;
-      remoteMsgs.forEach(function(m) { if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteMyMsgs++; });
-      DB.messages.forEach(function(m) { if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) localMyMsgs++; });
-      var newMsgsForMe = remoteMyMsgs - localMyMsgs;
+      // Compter uniquement les messages NON LUS qui me sont adressés
+      var remoteUnread = 0;
+      remoteMsgs.forEach(function(m) { if (!m.read && m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteUnread++; });
+      var localUnread = _notifCounts.msg;
+      var newMsgsForMe = remoteUnread - localUnread;
       if (newMsgsForMe > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgsForMe + ' nouveau' + (newMsgsForMe>1?'x':'') + ' message' + (newMsgsForMe>1?'s':'')); }
+      _notifCounts.msg = remoteUnread;
       DB.messages = remoteMsgs;
     }
 
@@ -911,6 +914,7 @@ async function pollForChanges() {
             taxDeclarations: d.tax_declarations || [], stock: d.stock || [],
             internalMessages: d.internal_messages || [], hrRecords: d.hr_records || [],
             serviceLog: d.service_log || [], info: d.info || {},
+            bankBalance: parseFloat(d.bank_balance) || 0, comptaHistory: d.compta_history || [], comptaWeeks: d.compta_weeks || [],
           };
           loadJob();
         }
@@ -1238,7 +1242,7 @@ function doRegister() {
 function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
   localStorage.setItem('sa_session', JSON.stringify({type:'citizen', id:citizen.id}));
-  _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+  _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   loadJob();
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.add('on');
@@ -1763,7 +1767,7 @@ function pMsg() {
 }
 
 function pMsgDetail(idx) {
-  const m = DB.messages[idx]; m.read = true; buildNav();
+  const m = DB.messages[idx]; m.read = true; markDirty('messages'); buildNav();
   const isSent = m.fromId === DB.user.id;
   let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._msgOpen=null;go('msg')">← Retour</button></div>`;
   h += `<div class="card">
@@ -2625,7 +2629,7 @@ function modalAddCompanyExpense() {
     <div class="row"><div class="fg"><label>Type</label><select id="ceType"><option>Loyer</option><option>Assurance</option><option>Électricité</option><option>Eau</option><option>Réparation</option><option>Fournitures</option><option>Marketing</option><option>Juridique</option><option>Autre</option></select></div><div class="fg"><label>Montant ($)</label><input type="number" id="ceAmt" placeholder="0"></div></div>
     <div class="fg"><label>Description</label><input id="ceDesc" placeholder="Détail de la dépense"></div>
     <div class="fg"><label style="display:flex;align-items:center;gap:.4rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ceRecur"> Charge récurrente (mensuelle)</label></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});markDirty('enterprise_data');closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
 }
 
 function payWeeklySalaries() {
@@ -3193,7 +3197,7 @@ function modalEditStock(idx) {
     <div class="row"><div class="fg"><label>Quantité</label><input type="number" id="esQty" value="${s.qty}"></div><div class="fg"><label>Unité</label><input id="esUnit" value="${s.unit}"></div></div>
     <div class="row"><div class="fg"><label>Seuil d'alerte</label><input type="number" id="esMin" value="${s.min}"></div><div class="fg"><label>Catégorie</label><input id="esCat" value="${s.cat}"></div></div>
     <div class="fg"><label>📝 Notes</label><input id="esNotes" value="${s.notes||''}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const s=DB.job.stock[${idx}];s.name=document.getElementById('esName').value;s.emoji=document.getElementById('esEmoji').value;s.qty=parseInt(document.getElementById('esQty').value)||0;s.unit=document.getElementById('esUnit').value;s.min=parseInt(document.getElementById('esMin').value)||0;s.cat=document.getElementById('esCat').value;s.notes=document.getElementById('esNotes').value;closeModal();toast('Stock mis à jour');go('wstock')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const s=DB.job.stock[${idx}];s.name=document.getElementById('esName').value;s.emoji=document.getElementById('esEmoji').value;s.qty=parseInt(document.getElementById('esQty').value)||0;s.unit=document.getElementById('esUnit').value;s.min=parseInt(document.getElementById('esMin').value)||0;s.cat=document.getElementById('esCat').value;s.notes=document.getElementById('esNotes').value;markDirty('enterprise_data');closeModal();toast('Stock mis à jour');go('wstock')">Sauvegarder</button></div>`);
 }
 
 function modalRestockItem(idx) {
@@ -3201,7 +3205,7 @@ function modalRestockItem(idx) {
   modal(`<div class="modal-t">📦 Réapprovisionner — ${s.emoji} ${s.name}</div>
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.85rem">Stock actuel: <strong class="mono" style="color:${s.qty<s.min?'var(--red)':'var(--green)'}">${s.qty} ${s.unit}</strong> — Seuil: ${s.min}</div>
     <div class="fg"><label>Quantité à ajouter</label><input type="number" id="rsQty" placeholder="0"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const q=parseInt(document.getElementById('rsQty').value)||0;DB.job.stock[${idx}].qty+= q;closeModal();toast('+'+q+' ${s.unit} ajouté(s)');go('wstock')">Réapprovisionner</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const q=parseInt(document.getElementById('rsQty').value)||0;DB.job.stock[${idx}].qty+= q;markDirty('enterprise_data');closeModal();toast('+'+q+' ${s.unit} ajouté(s)');go('wstock')">Réapprovisionner</button></div>`);
 }
 
 // ============ WORK: ARTICLES CAISSE ============
@@ -3413,7 +3417,7 @@ function modalPromote(empId) {
   const opts = DB.job.grades.map((g,i)=>`<option value="${i}" ${i===e.grade?'selected':''}>${g.name} (${g.commission}%)</option>`).join('');
   modal(`<div class="modal-t">⬆ Changer le grade de ${e.name}</div>
     <div class="fg"><label>Nouveau grade</label><select id="pGrade">${opts}</select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="e=DB.job.employees.find(x=>x.id==='${empId}');e.grade=parseInt(document.getElementById('pGrade').value);closeModal();toast(e.name+' → '+DB.job.grades[e.grade].name);go('wteam')">Appliquer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="e=DB.job.employees.find(x=>x.id==='${empId}');e.grade=parseInt(document.getElementById('pGrade').value);markDirty('enterprise_data');closeModal();toast(e.name+' → '+DB.job.grades[e.grade].name);go('wteam')">Appliquer</button></div>`);
 }
 
 // ============ WORK: GRADES ============
@@ -3578,7 +3582,7 @@ function pWApps() {
           <select id="appGrade${i}" style="width:auto;font-size:.8rem;padding:.3rem .5rem">${gradeOpts}</select>
           <div style="display:flex;gap:.3rem">
             <button class="btn btn-sm btn-green" onclick="acceptApp(${i})">✓ Accepter</button>
-            <button class="btn btn-sm btn-red" onclick="DB.job.pendingApps.splice(${i},1);toast('Candidature refusée');go('wapps')">✕ Refuser</button>
+            <button class="btn btn-sm btn-red" onclick="DB.job.pendingApps.splice(${i},1);markDirty('enterprise_data');toast('Candidature refusée');go('wapps')">✕ Refuser</button>
           </div>
         </div>
       </div></div>`;
@@ -3624,7 +3628,7 @@ function doGovLogin() {
   if (!account) { err('Code d\'accès incorrect.'); return; }
   DB.govUser = { id: account.id, name: name || account.name };
   localStorage.setItem('sa_session', JSON.stringify({type:'gov', id:account.id, name:name||account.name}));
-  _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+  _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   document.getElementById('auth').classList.add('hide');
   document.getElementById('govApp').classList.add('on');
   document.getElementById('gAv').textContent = (name||account.name).split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
@@ -4044,7 +4048,7 @@ function modalGovPostJob(entIdx) {
 }
 function govPostJob(entIdx) {
   const ent = DB.enterprises[entIdx];
-  DB.jobs.push({id:Date.now(), company:ent.name, icon:ent.icon, role:document.getElementById('gjRole').value||'Employé', salary:document.getElementById('gjSalary').value||'À définir', slots:parseInt(document.getElementById('gjSlots').value)||1, desc:document.getElementById('gjDesc').value||'Poste ouvert.', postedBy:'Gouvernement'});
+  markDirty('jobs');DB.jobs.push({id:Date.now(), company:ent.name, icon:ent.icon, role:document.getElementById('gjRole').value||'Employé', salary:document.getElementById('gjSalary').value||'À définir', slots:parseInt(document.getElementById('gjSlots').value)||1, desc:document.getElementById('gjDesc').value||'Poste ouvert.', postedBy:'Gouvernement'});
   closeModal(); toast('Offre publiée pour ' + ent.name); goGov('gent');
 }
 
@@ -4065,7 +4069,7 @@ function gJobs() {
           <p style="font-size:.8rem;color:var(--t2);margin-top:.3rem">${j.desc}</p>
           <div style="font-size:.73rem;color:var(--t3);margin-top:.3rem">👥 ${j.slots} poste${j.slots>1?'s':''} — Posté par ${j.postedBy||'—'}</div>
         </div>
-        <button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);toast('Offre supprimée');goGov('gjobs')" style="padding:.25rem .5rem">🗑️</button>
+        <button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);markDirty('jobs');toast('Offre supprimée');goGov('gjobs')" style="padding:.25rem .5rem">🗑️</button>
       </div></div>`;
   });
   return h;
@@ -4101,11 +4105,11 @@ function gTax() {
   const tc = DB.taxConfig;
   let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">💰 Configuration Fiscale</h1><p style="color:var(--t2);font-size:.82rem">Modifier les taux d'imposition en vigueur</p></div>`;
   h += `<div class="card"><div class="card-t">📊 TVA — Taux actuel: <strong style="color:var(--gold)">${tc.tva}%</strong></div>
-    <div class="row" style="align-items:flex-end"><div class="fg" style="margin:0"><label>Nouveau taux TVA (%)</label><input type="number" id="newTva" value="${tc.tva}" min="0" max="30"></div><div><button class="btn btn-sm btn-blue" onclick="DB.taxConfig.tva=parseInt(document.getElementById('newTva').value)||5;toast('TVA mise à jour: '+DB.taxConfig.tva+'%');goGov('gtax')">Appliquer</button></div></div></div>`;
+    <div class="row" style="align-items:flex-end"><div class="fg" style="margin:0"><label>Nouveau taux TVA (%)</label><input type="number" id="newTva" value="${tc.tva}" min="0" max="30"></div><div><button class="btn btn-sm btn-blue" onclick="markDirty('tax_config');DB.taxConfig.tva=parseInt(document.getElementById('newTva').value)||5;toast('TVA mise à jour: '+DB.taxConfig.tva+'%');goGov('gtax')">Appliquer</button></div></div></div>`;
   h += `<div class="card"><div class="card-t">📊 Barème Progressif de l'Impôt</div>
     <table><thead><tr><th>Tranche</th><th>Bénéfice Net</th><th>Taux</th><th>Action</th></tr></thead><tbody>`;
   tc.tranches.forEach((t,i) => {
-    h += `<tr><td><span class="badge b-gold">${i+1}</span></td><td class="mono">$${t.min.toLocaleString()} — $${t.max.toLocaleString()}</td><td><input type="number" value="${t.rate}" min="0" max="100" style="width:70px;padding:.3rem .5rem;font-size:.85rem" onchange="DB.taxConfig.tranches[${i}].rate=parseInt(this.value)||0;toast('Tranche ${i+1} → '+this.value+'%')"> %</td><td>${i>0?`<button class="btn btn-sm btn-red" onclick="DB.taxConfig.tranches.splice(${i},1);markDirty('tax_config');toast('Tranche supprimée');goGov('gtax')">✕</button>`:''}</td></tr>`;
+    h += `<tr><td><span class="badge b-gold">${i+1}</span></td><td class="mono">$${t.min.toLocaleString()} — $${t.max.toLocaleString()}</td><td><input type="number" value="${t.rate}" min="0" max="100" style="width:70px;padding:.3rem .5rem;font-size:.85rem" onchange="DB.taxConfig.tranches[${i}].rate=parseInt(this.value)||0;toast('Tranche ${i+1} → '+this.value+'%')"> %</td><td>${i>0?`<button class="btn btn-sm btn-red" onclick="markDirty('tax_config');DB.taxConfig.tranches.splice(${i},1);markDirty('tax_config');toast('Tranche supprimée');goGov('gtax')">✕</button>`:''}</td></tr>`;
   });
   h += `</tbody></table>
     <button class="btn btn-sm btn-outline" style="margin-top:.6rem" onclick="modalAddTranche()">+ Ajouter une tranche</button></div>`;
@@ -4133,7 +4137,7 @@ function modalAddTranche() {
   modal(`<div class="modal-t">➕ Nouvelle Tranche</div>
     <div class="row"><div class="fg"><label>À partir de ($)</label><input id="atMin" type="number" value="${last.max+1}"></div><div class="fg"><label>Jusqu'à ($)</label><input id="atMax" type="number" value="${last.max+100000}"></div></div>
     <div class="fg"><label>Taux (%)</label><input id="atRate" type="number" value="${last.rate+5}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.taxConfig.tranches.push({min:parseInt(document.getElementById('atMin').value),max:parseInt(document.getElementById('atMax').value),rate:parseInt(document.getElementById('atRate').value)});closeModal();markDirty('tax_config');toast('Tranche ajoutée');goGov('gtax')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="markDirty('tax_config');DB.taxConfig.tranches.push({min:parseInt(document.getElementById('atMin').value),max:parseInt(document.getElementById('atMax').value),rate:parseInt(document.getElementById('atRate').value)});closeModal();markDirty('tax_config');toast('Tranche ajoutée');goGov('gtax')">Ajouter</button></div>`);
 }
 function simTax() {
   const ca=parseInt(document.getElementById('simCA').value)||0, dep=parseInt(document.getElementById('simDep').value)||0;
@@ -4167,7 +4171,7 @@ function gBudget() {
     <table><thead><tr><th>Source</th><th>Période</th><th>Montant</th><th>Détail</th><th></th></tr></thead><tbody>`;
   b.income.forEach((i,idx) => {
     h += `<tr><td style="font-weight:500">${i.type}</td><td style="font-size:.8rem">${i.date}</td><td class="mono" style="color:var(--green)">$${i.amount.toLocaleString()}</td><td style="font-size:.8rem;color:var(--t2)">${i.desc}</td>
-      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.income.splice(${idx},1);toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
+      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.income.splice(${idx},1);markDirty('gov_budget');toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
   });
   h += `</tbody></table><div style="margin-top:.5rem;text-align:right;font-size:.85rem;color:var(--green)">Total: <strong class="mono">$${totalIncome.toLocaleString()}</strong></div></div>`;
 
@@ -4176,7 +4180,7 @@ function gBudget() {
     <table><thead><tr><th>Poste</th><th>Date</th><th>Montant</th><th>Détail</th><th></th></tr></thead><tbody>`;
   b.expenses.forEach((e,idx) => {
     h += `<tr><td style="font-weight:500">${e.type}</td><td style="font-size:.8rem">${e.date}</td><td class="mono" style="color:var(--red)">$${e.amount.toLocaleString()}</td><td style="font-size:.8rem;color:var(--t2)">${e.desc}${e.beneficiary?' → '+e.beneficiary:''}</td>
-      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.expenses.splice(${idx},1);toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
+      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.expenses.splice(${idx},1);markDirty('gov_budget');toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
   });
   h += `</tbody></table><div style="margin-top:.5rem;text-align:right;font-size:.85rem;color:var(--red)">Total: <strong class="mono">$${totalExpenses.toLocaleString()}</strong></div></div>`;
   h += '</div>';
@@ -4193,7 +4197,7 @@ function gBudget() {
         <div style="display:flex;gap:.3rem;align-items:center">
           <span class="mono" style="font-size:.85rem;color:var(--gold)">$${inv.spent.toLocaleString()} / $${inv.budget.toLocaleString()}</span>
           ${inv.status!=='done'?`<button class="btn btn-sm btn-outline" onclick="modalFundProject(${idx})" title="Débloquer des fonds">💰</button>`:''}
-          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer ce projet ?',function(){DB.govBudget.investments.splice(${idx},1);toast('Projet supprimé');goGov('gbudget')})" style="padding:.2rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer ce projet ?',function(){markDirty('gov_budget');DB.govBudget.investments.splice(${idx},1);toast('Projet supprimé');goGov('gbudget')})" style="padding:.2rem .4rem">✕</button>
         </div>
       </div>
       <p style="font-size:.8rem;color:var(--t2)">${inv.desc}</p>
@@ -4521,7 +4525,7 @@ function gVotes() {
         <span style="font-size:.72rem;color:var(--t3);margin-left:.5rem">${totalVotes} votes</span></div>
         <div style="display:flex;gap:.3rem">
           ${l.status==='open'?`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='closed';markDirty('laws');toast('Vote fermé');goGov('gvotes')">Fermer</button>`:`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='open';markDirty('laws');toast('Vote réouvert');goGov('gvotes')">Réouvrir</button>`}
-          <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);toast('Vote supprimé');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);markDirty('laws');toast('Vote supprimé');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
         </div>
       </div>`;
 
@@ -4663,7 +4667,7 @@ function createVote() {
       var cit = DB.citizens.find(function(c){return c.id===session.id});
       if (cit) {
         DB.user = {id:cit.id, name:cit.name, phone:cit.phone};
-        _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+        _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         loadJob();
         document.getElementById('auth').classList.add('hide');
         document.getElementById('app').classList.add('on');
@@ -4677,7 +4681,7 @@ function createVote() {
       var govAcc = DB.govAccounts ? DB.govAccounts.find(function(a){return a.id===session.id}) : null;
       if (govAcc) {
         DB.govUser = {id:govAcc.id, name:session.name||govAcc.name};
-        _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+        _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         document.getElementById('auth').classList.add('hide');
         document.getElementById('govApp').classList.add('on');
         var gini = (session.name||govAcc.name).split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
