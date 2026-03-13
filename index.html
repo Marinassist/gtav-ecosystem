@@ -326,6 +326,7 @@ async function _saveTable(name, who, ts) {
     case 'vault': await _saveVault(who, ts); break;
     case 'defcon_state': await _saveDefcon(who, ts); break;
     case 'temp_patients': await _saveTempPatients(who, ts); break;
+    case 'legal_codes': await _saveLegalCodes(who, ts); break;
   }
 }
 
@@ -534,6 +535,16 @@ async function _saveTempPatients(who, ts) {
   }
 }
 
+async function _saveLegalCodes(who, ts) {
+  var rows = DB.legalCodes.map(function(lc) {
+    return { code_id:lc.id, name:lc.name, icon:lc.icon, color:lc.color, articles:lc.articles, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('legal_codes').upsert(rows, { onConflict:'code_id' });
+    if (res.error) throw res.error;
+  }
+}
+
 // ============ SUPPRESSION EXPLICITE ============
 async function dbDelete(table, col, val) {
   try {
@@ -568,6 +579,7 @@ async function loadFromSupabase() {
       sb.from('vault').select('*'),
       sb.from('defcon_state').select('*').eq('id', 1).single(),
       sb.from('temp_patients').select('*'),
+      sb.from('legal_codes').select('*'),
     ]);
 
     var hasData = false;
@@ -708,6 +720,13 @@ async function loadFromSupabase() {
       DB.tempPatients = results[17].data.map(function(p) { return p.data || p; });
     }
 
+    // Legal codes (si modifiés par le gouvernement)
+    if (results[18].data && results[18].data.length) {
+      DB.legalCodes = results[18].data.map(function(lc) {
+        return { id:lc.code_id, name:lc.name, icon:lc.icon, color:lc.color, articles:lc.articles||[] };
+      });
+    }
+
     _supabaseOK = true;
     return hasData || results.some(function(r) { return r.data && (Array.isArray(r.data) ? r.data.length > 0 : true); });
 
@@ -756,7 +775,7 @@ function updateSyncBadge(state) {
     el = document.createElement('div');
     el.id = 'syncBadge';
     el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.65rem;padding:.3rem .6rem;border-radius:6px;z-index:9999;cursor:pointer;transition:all .3s';
-    el.onclick = function() { _saveFails=0; markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','decrees','gov_budget','tax_config','defcon_state','vault'); toast('Synchronisation forcée...'); };
+    el.onclick = function() { _saveFails=0; markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','decrees','gov_budget','tax_config','defcon_state','vault','legal_codes'); toast('Synchronisation forcée...'); };
     el.title = 'Cliquez pour forcer la synchronisation';
     document.body.appendChild(el);
   }
@@ -905,7 +924,7 @@ async function pollForChanges() {
 
 // Compatibility: saveDB() now triggers granular save
 function saveDB() {
-  markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','voted','decrees','gov_accounts','health_records','citizen_salaries','gov_budget','tax_config','gov_tax_declarations','vault','defcon_state','temp_patients');
+  markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','voted','decrees','gov_accounts','health_records','citizen_salaries','gov_budget','tax_config','gov_tax_declarations','vault','defcon_state','temp_patients','legal_codes');
 }
 
 // ============ DATA ============// ============ DATA ============
@@ -1621,31 +1640,86 @@ function pHealth() {
     return `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏥 Carnet de Santé</h1></div>
       <div class="card" style="text-align:center;padding:2rem"><div style="font-size:2.5rem;margin-bottom:.5rem">📋</div>
       <div style="font-size:.95rem;color:var(--t2)">Aucun dossier médical pour le moment</div>
-      <div style="font-size:.82rem;color:var(--t3);margin-top:.3rem">Votre dossier sera créé lors de votre première visite aux EMS.</div></div>`;
+      <div style="font-size:.82rem;color:var(--t3);margin-top:.3rem">Votre dossier sera créé lors de votre première visite au SAMS.</div></div>`;
   }
+  const statusColors = {'Stable':'var(--green)','En soins':'var(--blue)','Critique':'var(--red)','Hospitalisé':'var(--orange)','Sorti':'var(--t3)','Décédé':'var(--t3)'};
+  const st = hp.status || 'Stable';
   let h = `<div style="margin-bottom:1.2rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏥 Carnet de Santé</h1><p style="color:var(--t2);font-size:.82rem">${DB.user.name} — ${DB.user.id}</p></div>`;
+
+  // Status banner
+  h += `<div class="card" style="border-color:${statusColors[st]};display:flex;align-items:center;gap:.8rem;padding:.8rem 1rem">
+    <div style="width:12px;height:12px;border-radius:50%;background:${statusColors[st]};flex-shrink:0"></div>
+    <div><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px">Statut médical</div>
+    <div style="font-weight:700;color:${statusColors[st]};font-size:1rem">${st}</div></div></div>`;
+
+  // Profile
   h += `<div class="card"><div class="card-t">👤 Profil Médical</div>
     <div class="health-profile">
-      <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${hp.blood}</strong></div>
-      <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${hp.allergies}</strong></div>
-      <div class="health-row"><span>Taille</span><strong>${hp.height}</strong></div>
-      <div class="health-row"><span>Poids</span><strong>${hp.weight}</strong></div>
-      <div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">${hp.emergency}</strong></div>
-      <div class="health-row"><span>Pathologies</span><strong style="color:var(--green);font-size:.8rem">${hp.conditions}</strong></div>
+      <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${hp.blood||'?'}</strong></div>
+      <div class="health-row"><span>Sexe</span><strong>${hp.sex||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Date de naissance</span><strong>${hp.dob||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Taille</span><strong>${hp.height||'?'}</strong></div>
+      <div class="health-row"><span>Poids</span><strong>${hp.weight||'?'}</strong></div>
+      <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${hp.allergies||'Aucune'}</strong></div>
+      <div class="health-row"><span>Pathologies</span><strong style="font-size:.8rem">${hp.conditions||'Aucune'}</strong></div>
+      <div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">${hp.emergency||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>N° Sécu</span><strong class="mono" style="font-size:.8rem">${hp.ssn||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Assurance</span><strong style="font-size:.8rem">${hp.insurance||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Adresse</span><strong style="font-size:.8rem">${hp.address||'Non renseigné'}</strong></div>
     </div></div>`;
+
+  // Vitals
+  if (hp.vitals && hp.vitals.length) {
+    const v = hp.vitals[0];
+    h += `<div class="card"><div class="card-t">💓 Dernières Constantes <span style="font-size:.7rem;color:var(--t3);font-weight:400;margin-left:auto">${v.date||''}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.5rem">
+        <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Tension</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--red)">${v.bp||'—'}</div></div>
+        <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Pouls</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--orange)">${v.hr||'—'} bpm</div></div>
+        <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Température</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--gold)">${v.temp||'—'}°C</div></div>
+        <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">SpO2</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--cyan)">${v.spo2||'—'}%</div></div>
+      </div></div>`;
+  }
+
+  // Current treatments
+  if (hp.treatments && hp.treatments.length) {
+    h += `<div class="card"><div class="card-t">💊 Traitements en Cours</div>`;
+    hp.treatments.forEach(t => {
+      h += `<div style="display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;border-left:3px solid var(--blue)">
+        <div style="flex:1"><strong style="font-size:.88rem">${t.name}</strong><div style="font-size:.75rem;color:var(--t2)">${t.dosage||''} — ${t.frequency||''}</div></div>
+        <div style="font-size:.72rem;color:var(--t3);text-align:right">${t.start||''} → ${t.end||'en cours'}<br>Dr. ${t.doctor||'—'}</div>
+      </div>`;
+    });
+    h += '</div>';
+  }
+
+  // Antecedents
+  if (hp.antecedents && hp.antecedents.length) {
+    h += `<div class="card"><div class="card-t">📂 Antécédents Médicaux</div>`;
+    hp.antecedents.forEach(a => {
+      h += `<div style="padding:.4rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;font-size:.84rem">
+        <strong>${a.title}</strong> <span style="color:var(--t3);font-size:.75rem">${a.date||''}</span>
+        <div style="font-size:.78rem;color:var(--t2)">${a.notes||''}</div></div>`;
+    });
+    h += '</div>';
+  }
+
+  // History
   h += `<div class="card"><div class="card-t">📋 Historique des Soins</div><div style="margin-top:.3rem">`;
-  if (!hp.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin enregistré.</p>';
-  hp.history.forEach(e => {
+  if (!hp.history || !hp.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin enregistré.</p>';
+  else hp.history.forEach(e => {
     h += `<div class="timeline-item">
-      <div class="timeline-date">${e.date} — <span class="badge ${e.badge}">${e.type}</span></div>
+      <div class="timeline-date">${e.date} — <span class="badge ${e.badge}">${e.type}</span>${e.severity?' <span class="badge b-${e.severity==='Critique'?'red':e.severity==='Grave'?'orange':'green'}">${e.severity}</span>':''}</div>
       <div class="timeline-text"><strong>${e.title}</strong></div>
-      <div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ${e.doctor}</div>
+      <div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ${e.doctor}${e.location?' — 📍 '+e.location:''}</div>
       <div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">${e.notes}</div>
+      ${e.prescription?'<div style="font-size:.78rem;color:var(--cyan);margin-top:.15rem">💊 '+e.prescription+'</div>':''}
+      ${e.followup?'<div style="font-size:.78rem;color:var(--gold);margin-top:.15rem">📅 Suivi: '+e.followup+'</div>':''}
     </div>`;
   });
   h += '</div></div>';
   return h;
 }
+
 
 // ============ MESSAGES ============
 function pMsg() {
@@ -2778,10 +2852,31 @@ function pWPatients() {
   if (v && v.startsWith('tmp:')) return pWPatientDetail(v.replace('tmp:',''), true);
 
   const citWithRecords = Object.keys(DB.healthRecords);
+  const criticals = citWithRecords.filter(cid => { var r=DB.healthRecords[cid]; return r.status==='Critique'||r.status==='Hospitalisé'; });
   let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
     <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🩺 Dossiers Patients</h1><p style="color:var(--t2);font-size:.82rem">${citWithRecords.length} dossiers citoyen + ${DB.tempPatients.length} temporaire${DB.tempPatients.length>1?'s':''}</p></div>
     <button class="btn btn-sm btn-blue" onclick="modalCreateTempPatient()">+ Dossier Temporaire</button>
   </div>`;
+
+  // Stats
+  h += `<div class="stats">
+    <div class="stat"><div class="stat-l">Dossiers</div><div class="stat-v" style="color:var(--blue)">${citWithRecords.length}</div></div>
+    <div class="stat"><div class="stat-l">Critiques</div><div class="stat-v" style="color:${criticals.length?'var(--red)':'var(--green)'}">${criticals.length}</div></div>
+    <div class="stat"><div class="stat-l">Temporaires</div><div class="stat-v" style="color:var(--orange)">${DB.tempPatients.length}</div></div>
+  </div>`;
+
+  // Criticals banner
+  if (criticals.length) {
+    h += `<div class="card" style="border-color:rgba(239,68,68,.3)"><div class="card-t" style="color:var(--red)">🚨 Patients en état critique / hospitalisés</div>`;
+    criticals.forEach(cid => {
+      const rec = DB.healthRecords[cid]; const cit = DB.citizens.find(c=>c.id===cid);
+      h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:rgba(239,68,68,.06);border-radius:6px;margin-bottom:.3rem">
+        <div><strong>${cit?cit.name:cid}</strong> <span class="mono" style="font-size:.72rem;color:var(--t3)">${cid}</span>
+          <span class="badge b-red">${rec.status}</span></div>
+        <button class="btn btn-sm btn-blue" onclick="DB._patientView='cit:${cid}';go('wpatients')">Ouvrir</button></div>`;
+    });
+    h += '</div>';
+  }
 
   // Search
   h += `<div class="card"><div class="card-t">🔍 Rechercher un Patient</div>
@@ -2791,18 +2886,20 @@ function pWPatients() {
 
   // Citizen records
   h += `<div class="card"><div class="card-t">📋 Dossiers Citoyens</div>`;
-  h += '<table><thead><tr><th>ID</th><th>Nom</th><th>Groupe</th><th>Allergies</th><th>Dernière visite</th><th></th></tr></thead><tbody>';
+  h += '<table><thead><tr><th>ID</th><th>Nom</th><th>Statut</th><th>Groupe</th><th>Allergies</th><th>Dernière visite</th><th></th></tr></thead><tbody>';
   citWithRecords.forEach(cid => {
     const rec = DB.healthRecords[cid];
     const cit = DB.citizens.find(c=>c.id===cid);
     const name = cit ? cit.name : cid;
-    const lastVisit = rec.history.length ? rec.history[0].date : '—';
-    h += `<tr><td class="mono" style="font-size:.78rem;color:var(--gold)">${cid}</td><td style="font-weight:600">${name}</td><td style="color:var(--red);font-weight:600">${rec.blood}</td><td style="font-size:.82rem;color:var(--orange)">${rec.allergies}</td><td style="font-size:.8rem">${lastVisit}</td>
+    const lastVisit = (rec.history && rec.history.length) ? rec.history[0].date : '—';
+    const st = rec.status || 'Stable';
+    const stColor = st==='Critique'?'b-red':st==='Hospitalisé'||st==='En soins'?'b-orange':st==='Décédé'?'b-red':'b-green';
+    h += `<tr><td class="mono" style="font-size:.78rem;color:var(--gold)">${cid}</td><td style="font-weight:600">${name}</td><td><span class="badge ${stColor}">${st}</span></td><td style="color:var(--red);font-weight:600">${rec.blood||'?'}</td><td style="font-size:.82rem;color:var(--orange)">${rec.allergies||'—'}</td><td style="font-size:.8rem">${lastVisit}</td>
       <td><button class="btn btn-sm btn-blue" onclick="DB._patientView='cit:${cid}';go('wpatients')">Ouvrir</button></td></tr>`;
   });
   h += '</tbody></table></div>';
 
-  // Temp patient files
+  // Temp patients
   if (DB.tempPatients.length) {
     h += `<div class="card"><div class="card-t" style="color:var(--orange)">⚠️ Dossiers Temporaires (sans compte citoyen)</div>`;
     DB.tempPatients.forEach((p,i) => {
@@ -2824,42 +2921,141 @@ function pWPatientDetail(id, isTemp) {
   if (isTemp) {
     const p = DB.tempPatients[parseInt(id)];
     if (!p) { DB._patientView=null; return pWPatients(); }
-    rec = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Non renseigné', history: p.history };
+    rec = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Non renseigné', sex:'?', dob:'?', ssn:'', insurance:'', address:'', status: p.status||'En soins', vitals: p.vitals||[], treatments: p.treatments||[], antecedents: p.antecedents||[], prescriptions: p.prescriptions||[], notes_internes: p.notes_internes||[], history: p.history||[] };
     name = p.name; patId = p.id;
   } else {
     rec = DB.healthRecords[id];
     if (!rec) { DB._patientView=null; return pWPatients(); }
+    if (!rec.vitals) rec.vitals = [];
+    if (!rec.treatments) rec.treatments = [];
+    if (!rec.antecedents) rec.antecedents = [];
+    if (!rec.prescriptions) rec.prescriptions = [];
+    if (!rec.notes_internes) rec.notes_internes = [];
+    if (!rec.history) rec.history = [];
     const cit = DB.citizens.find(c=>c.id===id);
     name = cit ? cit.name : id; patId = id;
   }
 
-  let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._patientView=null;go('wpatients')">← Retour</button></div>`;
+  const statusColors = {'Stable':'var(--green)','En soins':'var(--blue)','Critique':'var(--red)','Hospitalisé':'var(--orange)','Sorti':'var(--t3)','Décédé':'var(--t3)'};
+  const st = rec.status || 'Stable';
+
+  let h = `<div style="margin-bottom:.8rem;display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-sm btn-outline" onclick="DB._patientView=null;go('wpatients')">← Retour</button>
+    <button class="btn btn-sm btn-outline" onclick="modalChangePatientStatus('${id}',${isTemp})">🔄 Statut</button></div>`;
+
+  // Header with status
   h += `<div style="margin-bottom:1rem;display:flex;align-items:center;gap:.8rem">
     <div style="font-size:2rem">🏥</div>
-    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.4rem;font-weight:700">${name}</h1>
+    <div style="flex:1"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.4rem;font-weight:700">${name}</h1>
     <p style="color:var(--t2);font-size:.82rem">${patId} ${isTemp?'<span class="badge b-orange">Temporaire</span>':''}</p></div>
+    <div style="text-align:right"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Statut</div>
+    <div style="font-weight:700;color:${statusColors[st]};font-size:1.1rem">${st==='Critique'?'🔴':''}${st==='Hospitalisé'?'🟠':''}${st==='En soins'?'🔵':''}${st==='Stable'?'🟢':''}${st==='Sorti'?'⚪':''} ${st}</div></div>
   </div>`;
 
   // Profile
   h += `<div class="card"><div class="card-t" style="justify-content:space-between">👤 Profil Médical ${!isTemp?`<button class="btn btn-sm btn-outline" onclick="modalEditMedProfile('${id}')">✏️ Modifier</button>`:''}</div>
     <div class="health-profile">
-      <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${rec.blood}</strong></div>
-      <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${rec.allergies}</strong></div>
-      <div class="health-row"><span>Taille</span><strong>${rec.height}</strong></div>
-      <div class="health-row"><span>Poids</span><strong>${rec.weight}</strong></div>
-      <div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">${rec.emergency}</strong></div>
-      <div class="health-row"><span>Pathologies</span><strong style="font-size:.8rem">${rec.conditions}</strong></div>
+      <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${rec.blood||'?'}</strong></div>
+      <div class="health-row"><span>Sexe</span><strong>${rec.sex||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Date de naissance</span><strong>${rec.dob||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Taille</span><strong>${rec.height||'?'}</strong></div>
+      <div class="health-row"><span>Poids</span><strong>${rec.weight||'?'}</strong></div>
+      <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${rec.allergies||'Aucune'}</strong></div>
+      <div class="health-row"><span>Pathologies</span><strong style="font-size:.8rem">${rec.conditions||'Aucune'}</strong></div>
+      <div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">${rec.emergency||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>N° Sécu</span><strong class="mono" style="font-size:.8rem">${rec.ssn||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Assurance</span><strong style="font-size:.8rem">${rec.insurance||'Non renseigné'}</strong></div>
+      <div class="health-row"><span>Adresse</span><strong style="font-size:.8rem">${rec.address||'Non renseigné'}</strong></div>
     </div></div>`;
 
-  // Add entry button
+  // Vitals
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">💓 Constantes Vitales <button class="btn btn-sm btn-green" onclick="modalAddVitals('${id}',${isTemp})">+ Prendre les constantes</button></div>`;
+  if (rec.vitals.length) {
+    const v = rec.vitals[0];
+    h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.5rem;margin-bottom:.6rem">
+      <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Tension</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--red)">${v.bp||'—'}</div></div>
+      <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Pouls</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--orange)">${v.hr||'—'} bpm</div></div>
+      <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Température</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--gold)">${v.temp||'—'}°C</div></div>
+      <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">SpO2</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:var(--cyan)">${v.spo2||'—'}%</div></div>
+      <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Douleur</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:${parseInt(v.pain)>6?'var(--red)':parseInt(v.pain)>3?'var(--orange)':'var(--green)'}">${v.pain||'—'}/10</div></div>
+      <div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Glasgow</div><div style="font-family:'Rajdhani',sans-serif;font-size:1.2rem;font-weight:700;color:${parseInt(v.glasgow)<9?'var(--red)':parseInt(v.glasgow)<13?'var(--orange)':'var(--green)'}">${v.glasgow||'—'}/15</div></div>
+    </div>
+    <div style="font-size:.72rem;color:var(--t3)">Dernière prise : ${v.date||'—'} par ${v.by||'—'}</div>`;
+    // Vitals history (collapsed)
+    if (rec.vitals.length > 1) {
+      h += `<details style="margin-top:.5rem"><summary style="font-size:.78rem;color:var(--t2);cursor:pointer">📊 Historique (${rec.vitals.length} relevés)</summary>
+        <table style="margin-top:.3rem"><thead><tr><th>Date</th><th>Tension</th><th>Pouls</th><th>Temp</th><th>SpO2</th><th>Douleur</th><th>Glasgow</th><th>Par</th></tr></thead><tbody>`;
+      rec.vitals.forEach(vr => {
+        h += `<tr><td style="font-size:.75rem">${vr.date||''}</td><td style="font-size:.8rem">${vr.bp||'—'}</td><td>${vr.hr||'—'}</td><td>${vr.temp||'—'}</td><td>${vr.spo2||'—'}</td><td>${vr.pain||'—'}</td><td>${vr.glasgow||'—'}</td><td style="font-size:.75rem">${vr.by||'—'}</td></tr>`;
+      });
+      h += '</tbody></table></details>';
+    }
+  } else {
+    h += '<p style="color:var(--t3);font-size:.83rem">Aucune constante enregistrée.</p>';
+  }
+  h += '</div>';
+
+  // Treatments
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">💊 Traitements en Cours <button class="btn btn-sm btn-green" onclick="modalAddTreatment('${id}',${isTemp})">+ Traitement</button></div>`;
+  if (rec.treatments.length) {
+    rec.treatments.forEach((t,ti) => {
+      h += `<div style="display:flex;align-items:center;gap:.6rem;padding:.5rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;border-left:3px solid var(--blue)">
+        <div style="flex:1"><strong style="font-size:.88rem">💊 ${t.name}</strong>
+          <div style="font-size:.78rem;color:var(--t2)">${t.dosage||''} — ${t.frequency||''}</div>
+          ${t.notes?'<div style="font-size:.75rem;color:var(--t3)">'+t.notes+'</div>':''}</div>
+        <div style="font-size:.72rem;color:var(--t3);text-align:right">${t.start||''} → ${t.end||'en cours'}<br>Dr. ${t.doctor||'—'}</div>
+        <button class="btn btn-sm btn-red" style="padding:.2rem .4rem" onclick="var r=${isTemp}?DB.tempPatients[${parseInt(id)}]:DB.healthRecords['${id}'];(r.treatments||r).splice(${ti},1);markDirty('health_records','temp_patients');go('wpatients')">✕</button>
+      </div>`;
+    });
+  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucun traitement en cours.</p>';
+  h += '</div>';
+
+  // Prescriptions
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">📝 Ordonnances <button class="btn btn-sm btn-green" onclick="modalAddPrescription('${id}',${isTemp})">+ Ordonnance</button></div>`;
+  if (rec.prescriptions.length) {
+    rec.prescriptions.forEach((p,pi) => {
+      h += `<div style="padding:.55rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.4rem;border-left:3px solid var(--cyan)">
+        <div style="display:flex;justify-content:space-between"><strong style="font-size:.88rem">📋 Ordonnance du ${p.date||'—'}</strong><span style="font-size:.72rem;color:var(--t3)">Dr. ${p.doctor||'—'}</span></div>
+        <div style="font-size:.82rem;color:var(--t2);margin-top:.2rem;white-space:pre-line">${p.content||''}</div>
+        ${p.notes?'<div style="font-size:.75rem;color:var(--t3);margin-top:.2rem;font-style:italic">'+p.notes+'</div>':''}
+      </div>`;
+    });
+  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucune ordonnance.</p>';
+  h += '</div>';
+
+  // Antecedents
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">📂 Antécédents Médicaux <button class="btn btn-sm btn-green" onclick="modalAddAntecedent('${id}',${isTemp})">+ Antécédent</button></div>`;
+  if (rec.antecedents.length) {
+    rec.antecedents.forEach(a => {
+      h += `<div style="padding:.4rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;font-size:.84rem;border-left:3px solid var(--purple)">
+        <strong>${a.title}</strong> <span style="color:var(--t3);font-size:.75rem">${a.date||''} — ${a.type||''}</span>
+        <div style="font-size:.78rem;color:var(--t2)">${a.notes||''}</div></div>`;
+    });
+  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucun antécédent enregistré.</p>';
+  h += '</div>';
+
+  // Internal notes (EMS only)
+  h += `<div class="card" style="border-color:rgba(239,68,68,.15)"><div class="card-t" style="justify-content:space-between;color:var(--red)">🔒 Notes Internes SAMS <button class="btn btn-sm btn-outline" style="border-color:rgba(239,68,68,.3);color:var(--red)" onclick="modalAddInternalNote('${id}',${isTemp})">+ Note</button></div>
+    <p style="font-size:.72rem;color:var(--t3);margin-bottom:.4rem">Visibles uniquement par le personnel SAMS</p>`;
+  if (rec.notes_internes.length) {
+    rec.notes_internes.forEach(n => {
+      h += `<div style="padding:.45rem .6rem;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.1);border-radius:6px;margin-bottom:.3rem">
+        <div style="display:flex;justify-content:space-between"><span style="font-size:.75rem;color:var(--red);font-weight:600">${n.author||'—'}</span><span style="font-size:.7rem;color:var(--t3)">${n.date||''}</span></div>
+        <div style="font-size:.82rem;margin-top:.15rem">${n.text||''}</div></div>`;
+    });
+  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucune note interne.</p>';
+  h += '</div>';
+
+  // Care history
   h += `<div class="card"><div class="card-t" style="justify-content:space-between">📋 Historique des Soins <button class="btn btn-sm btn-green" onclick="modalAddSoin('${id}',${isTemp})">+ Ajouter un Soin</button></div><div style="margin-top:.3rem">`;
   if (!rec.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin enregistré.</p>';
   rec.history.forEach(e => {
     h += `<div class="timeline-item">
-      <div class="timeline-date">${e.date} — <span class="badge ${e.badge}">${e.type}</span></div>
+      <div class="timeline-date">${e.date} — <span class="badge ${e.badge}">${e.type}</span>${e.severity?' <span class="badge b-${e.severity==='Critique'?'red':e.severity==='Grave'?'orange':'green'}">${e.severity}</span>':''}</div>
       <div class="timeline-text"><strong>${e.title}</strong></div>
-      <div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ${e.doctor}</div>
+      <div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ${e.doctor}${e.location?' — 📍 '+e.location:''}</div>
       <div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">${e.notes}</div>
+      ${e.prescription?'<div style="font-size:.78rem;color:var(--cyan);margin-top:.15rem">💊 '+e.prescription+'</div>':''}
+      ${e.followup?'<div style="font-size:.78rem;color:var(--gold);margin-top:.15rem">📅 Suivi: '+e.followup+'</div>':''}
     </div>`;
   });
   h += '</div></div>';
@@ -2870,10 +3066,9 @@ function searchPatient() {
   const q = document.getElementById('patSearch').value.trim().toLowerCase();
   const el = document.getElementById('patSearchResult');
   if (!q) { el.innerHTML=''; return; }
-  // Search in citizens
   const results = DB.citizens.filter(c => c.id.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
   if (!results.length) {
-    el.innerHTML = `<div style="padding:.5rem .7rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);border-radius:6px;font-size:.83rem;color:var(--orange)">❌ Aucun citoyen trouvé pour "${q}"<br><span style="font-size:.78rem;color:var(--t3)">Vous pouvez créer un dossier temporaire si le patient n'a pas de compte.</span></div>`;
+    el.innerHTML = `<div style="padding:.5rem .7rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);border-radius:6px;font-size:.83rem;color:var(--orange)">❌ Aucun citoyen trouvé pour "${q}"<br><span style="font-size:.78rem;color:var(--t3)">Vous pouvez créer un dossier temporaire.</span></div>`;
     return;
   }
   let h = '';
@@ -2889,7 +3084,8 @@ function searchPatient() {
 }
 
 function createNewPatientRecord(citizenId) {
-  DB.healthRecords[citizenId] = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', history:[] };
+  DB.healthRecords[citizenId] = { blood:'?', sex:'Non renseigné', dob:'Non renseigné', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', ssn:'', insurance:'', address:'', status:'Stable', vitals:[], treatments:[], antecedents:[], prescriptions:[], notes_internes:[], history:[] };
+  markDirty('health_records');
   toast('Dossier créé pour ' + citizenId);
   DB._patientView = 'cit:' + citizenId;
   go('wpatients');
@@ -2897,41 +3093,146 @@ function createNewPatientRecord(citizenId) {
 
 function modalCreateTempPatient() {
   modal(`<div class="modal-t">⚠️ Créer un Dossier Temporaire</div>
-    <p style="font-size:.82rem;color:var(--orange);margin-bottom:.8rem">Pour un patient sans compte citoyen. Le dossier pourra être lié à un citoyen plus tard.</p>
-    <div class="fg"><label>Nom / Description du patient</label><input id="tpName" placeholder="Ex: Homme ~30 ans, blessé Vinewood"></div>
-    <div class="fg"><label>Détails supplémentaires</label><input id="tpDesc" placeholder="Circonstances, lieu trouvé..."></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('tpName').value||'Patient inconnu';DB.tempPatients.push({id:'TEMP-'+Math.floor(100+Math.random()*900),name:n,desc:document.getElementById('tpDesc').value||'—',created:new Date().toLocaleDateString('fr-FR'),createdBy:DB.user.name,history:[]});closeModal();toast('Dossier temporaire créé');go('wpatients')">Créer</button></div>`);
+    <p style="font-size:.82rem;color:var(--orange);margin-bottom:.8rem">Pour un patient sans compte citoyen. Le dossier pourra être lié plus tard.</p>
+    <div class="fg"><label>Nom / Description</label><input id="tpName" placeholder="Ex: Homme ~30 ans, blessé Vinewood"></div>
+    <div class="fg"><label>Détails / Circonstances</label><input id="tpDesc" placeholder="Circonstances, lieu..."></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doCreateTempPatient()">Créer</button></div>`);
+}
+function doCreateTempPatient() {
+  var n = document.getElementById('tpName').value || 'Patient inconnu';
+  DB.tempPatients.push({id:'TEMP-'+Math.floor(100+Math.random()*900), name:n, desc:document.getElementById('tpDesc').value||'—', created:new Date().toLocaleDateString('fr-FR'), createdBy:DB.user.name, status:'En soins', vitals:[], treatments:[], antecedents:[], prescriptions:[], notes_internes:[], history:[]});
+  markDirty('temp_patients');
+  closeModal(); toast('Dossier temporaire créé'); go('wpatients');
 }
 
 function modalLinkTempPatient(tmpIdx) {
   const p = DB.tempPatients[tmpIdx];
   const citOpts = DB.citizens.map(c=>`<option value="${c.id}">${c.name} (${c.id})</option>`).join('');
   modal(`<div class="modal-t">🔗 Lier à un Citoyen — ${p.name}</div>
-    <p style="font-size:.82rem;color:var(--t2);margin-bottom:.8rem">Transférer ce dossier temporaire vers le carnet de santé d'un citoyen inscrit.</p>
+    <p style="font-size:.82rem;color:var(--t2);margin-bottom:.8rem">Transférer le dossier temporaire vers le carnet de santé d'un citoyen.</p>
     <div class="fg"><label>Citoyen</label><select id="linkCit">${citOpts}</select></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="linkTempToCitizen(${tmpIdx})">Lier</button></div>`);
 }
-
 function linkTempToCitizen(tmpIdx) {
   const p = DB.tempPatients[tmpIdx];
   const cid = document.getElementById('linkCit').value;
-  if (!DB.healthRecords[cid]) DB.healthRecords[cid] = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', history:[] };
-  // Transfer history
-  p.history.forEach(h => DB.healthRecords[cid].history.unshift(h));
+  if (!DB.healthRecords[cid]) DB.healthRecords[cid] = { blood:'?', sex:'?', dob:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', ssn:'', insurance:'', address:'', status:'Stable', vitals:[], treatments:[], antecedents:[], prescriptions:[], notes_internes:[], history:[] };
+  // Transfer all data
+  (p.history||[]).forEach(h => DB.healthRecords[cid].history.unshift(h));
+  (p.vitals||[]).forEach(v => DB.healthRecords[cid].vitals.unshift(v));
+  (p.treatments||[]).forEach(t => DB.healthRecords[cid].treatments.push(t));
+  (p.prescriptions||[]).forEach(pr => DB.healthRecords[cid].prescriptions.push(pr));
+  (p.antecedents||[]).forEach(a => DB.healthRecords[cid].antecedents.push(a));
+  (p.notes_internes||[]).forEach(n => DB.healthRecords[cid].notes_internes.push(n));
   DB.tempPatients.splice(tmpIdx, 1);
   const cit = DB.citizens.find(c=>c.id===cid);
+  markDirty('health_records','temp_patients');
   closeModal(); toast('Dossier transféré vers ' + (cit?cit.name:cid));
   DB._patientView = 'cit:' + cid;
   go('wpatients');
 }
 
+function modalChangePatientStatus(id, isTemp) {
+  const opts = ['Stable','En soins','Hospitalisé','Critique','Sorti','Décédé'].map(s=>`<option>${s}</option>`).join('');
+  modal(`<div class="modal-t">🔄 Changer le Statut du Patient</div>
+    <div class="fg"><label>Nouveau statut</label><select id="psStatus">${opts}</select></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="doChangePatientStatus('${id}',${isTemp})">Appliquer</button></div>`);
+}
+function doChangePatientStatus(id, isTemp) {
+  var st = document.getElementById('psStatus').value;
+  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(p) p.status=st; }
+  else { if(DB.healthRecords[id]) DB.healthRecords[id].status=st; }
+  markDirty('health_records','temp_patients');
+  closeModal(); toast('Statut → '+st); go('wpatients');
+}
+
+function modalAddVitals(id, isTemp) {
+  modal(`<div class="modal-t">💓 Prendre les Constantes Vitales</div>
+    <div class="row"><div class="fg"><label>Tension artérielle</label><input id="vBp" placeholder="Ex: 12/8"></div><div class="fg"><label>Pouls (bpm)</label><input id="vHr" type="number" placeholder="Ex: 75"></div></div>
+    <div class="row"><div class="fg"><label>Température (°C)</label><input id="vTemp" placeholder="Ex: 37.2"></div><div class="fg"><label>SpO2 (%)</label><input id="vSpo2" type="number" placeholder="Ex: 98"></div></div>
+    <div class="row"><div class="fg"><label>Douleur (0-10)</label><input id="vPain" type="number" min="0" max="10" placeholder="0-10"></div><div class="fg"><label>Score Glasgow (3-15)</label><input id="vGlasgow" type="number" min="3" max="15" placeholder="3-15"></div></div>
+    <div class="fg"><label>Observations</label><input id="vObs" placeholder="État général, pupilles, respiration..."></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddVitals('${id}',${isTemp})">Enregistrer</button></div>`);
+}
+function doAddVitals(id, isTemp) {
+  var entry = { date:new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), by:DB.user.name, bp:document.getElementById('vBp').value||'—', hr:document.getElementById('vHr').value||'—', temp:document.getElementById('vTemp').value||'—', spo2:document.getElementById('vSpo2').value||'—', pain:document.getElementById('vPain').value||'—', glasgow:document.getElementById('vGlasgow').value||'—', obs:document.getElementById('vObs').value||'' };
+  var rec;
+  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.vitals)p.vitals=[]; p.vitals.unshift(entry); }
+  else { rec=DB.healthRecords[id]; if(!rec.vitals)rec.vitals=[]; rec.vitals.unshift(entry); }
+  markDirty('health_records','temp_patients');
+  closeModal(); toast('Constantes enregistrées'); go('wpatients');
+}
+
+function modalAddTreatment(id, isTemp) {
+  modal(`<div class="modal-t">💊 Ajouter un Traitement</div>
+    <div class="fg"><label>Médicament / Traitement</label><input id="trName" placeholder="Ex: Morphine, Paracétamol..."></div>
+    <div class="row"><div class="fg"><label>Dosage</label><input id="trDose" placeholder="Ex: 500mg"></div><div class="fg"><label>Fréquence</label><input id="trFreq" placeholder="Ex: 3x/jour"></div></div>
+    <div class="row"><div class="fg"><label>Début</label><input id="trStart" value="${new Date().toLocaleDateString('fr-FR')}"></div><div class="fg"><label>Fin (vide = en cours)</label><input id="trEnd" placeholder="JJ/MM/AAAA"></div></div>
+    <div class="fg"><label>Notes</label><input id="trNotes" placeholder="Précautions, effets secondaires..."></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddTreatment('${id}',${isTemp})">Ajouter</button></div>`);
+}
+function doAddTreatment(id, isTemp) {
+  var t = { name:document.getElementById('trName').value||'Traitement', dosage:document.getElementById('trDose').value||'', frequency:document.getElementById('trFreq').value||'', start:document.getElementById('trStart').value||'', end:document.getElementById('trEnd').value||'', doctor:DB.user.name, notes:document.getElementById('trNotes').value||'' };
+  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.treatments)p.treatments=[]; p.treatments.push(t); }
+  else { var r=DB.healthRecords[id]; if(!r.treatments)r.treatments=[]; r.treatments.push(t); }
+  markDirty('health_records','temp_patients');
+  closeModal(); toast('Traitement ajouté'); go('wpatients');
+}
+
+function modalAddPrescription(id, isTemp) {
+  modal(`<div class="modal-t">📝 Nouvelle Ordonnance</div>
+    <div class="fg"><label>Contenu de l'ordonnance</label><textarea id="prContent" rows="6" placeholder="— Paracétamol 1g, 3x/jour, 5 jours\n— Repos strict 48h\n— Contrôle dans 1 semaine"></textarea></div>
+    <div class="fg"><label>Notes complémentaires</label><input id="prNotes" placeholder="Instructions particulières..."></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddPrescription('${id}',${isTemp})">Enregistrer</button></div>`);
+}
+function doAddPrescription(id, isTemp) {
+  var p = { date:new Date().toLocaleDateString('fr-FR'), doctor:DB.user.name, content:document.getElementById('prContent').value||'', notes:document.getElementById('prNotes').value||'' };
+  if (isTemp) { var tp=DB.tempPatients[parseInt(id)]; if(!tp.prescriptions)tp.prescriptions=[]; tp.prescriptions.unshift(p); }
+  else { var r=DB.healthRecords[id]; if(!r.prescriptions)r.prescriptions=[]; r.prescriptions.unshift(p); }
+  markDirty('health_records','temp_patients');
+  closeModal(); toast('Ordonnance enregistrée'); go('wpatients');
+}
+
+function modalAddAntecedent(id, isTemp) {
+  var types = ['Chirurgie','Maladie','Hospitalisation','Accident','Allergie découverte','Fracture','Autre'].map(t=>`<option>${t}</option>`).join('');
+  modal(`<div class="modal-t">📂 Ajouter un Antécédent</div>
+    <div class="row"><div class="fg"><label>Type</label><select id="antType">${types}</select></div><div class="fg"><label>Date</label><input id="antDate" placeholder="Ex: 2024, Mars 2025..."></div></div>
+    <div class="fg"><label>Titre</label><input id="antTitle" placeholder="Ex: Appendicectomie, Fracture tibia..."></div>
+    <div class="fg"><label>Notes</label><textarea id="antNotes" rows="2" placeholder="Détails, séquelles..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddAntecedent('${id}',${isTemp})">Ajouter</button></div>`);
+}
+function doAddAntecedent(id, isTemp) {
+  var a = { type:document.getElementById('antType').value, title:document.getElementById('antTitle').value||'Antécédent', date:document.getElementById('antDate').value||'', notes:document.getElementById('antNotes').value||'' };
+  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.antecedents)p.antecedents=[]; p.antecedents.push(a); }
+  else { var r=DB.healthRecords[id]; if(!r.antecedents)r.antecedents=[]; r.antecedents.push(a); }
+  markDirty('health_records','temp_patients');
+  closeModal(); toast('Antécédent ajouté'); go('wpatients');
+}
+
+function modalAddInternalNote(id, isTemp) {
+  modal(`<div class="modal-t" style="color:var(--red)">🔒 Note Interne SAMS</div>
+    <p style="font-size:.78rem;color:var(--t3);margin-bottom:.6rem">Cette note ne sera visible que par le personnel SAMS.</p>
+    <div class="fg"><label>Note</label><textarea id="inNote" rows="4" placeholder="Observations, suspicions, consignes internes..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="doAddInternalNote('${id}',${isTemp})">Enregistrer</button></div>`);
+}
+function doAddInternalNote(id, isTemp) {
+  var n = { date:new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), author:DB.user.name, text:document.getElementById('inNote').value||'' };
+  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.notes_internes)p.notes_internes=[]; p.notes_internes.unshift(n); }
+  else { var r=DB.healthRecords[id]; if(!r.notes_internes)r.notes_internes=[]; r.notes_internes.unshift(n); }
+  markDirty('health_records','temp_patients');
+  closeModal(); toast('Note interne enregistrée'); go('wpatients');
+}
+
 function modalAddSoin(id, isTemp) {
-  const types = ['Consultation','Soins','Opération','Analyse','Urgence','Vaccination','Rééducation'].map(t=>`<option>${t}</option>`).join('');
-  const badges = {'Consultation':'b-green','Soins':'b-red','Opération':'b-purple','Analyse':'b-blue','Urgence':'b-orange','Vaccination':'b-cyan','Rééducation':'b-gold'};
+  const types = ['Consultation','Soins','Opération','Analyse','Urgence','Vaccination','Rééducation','Transport sanitaire','Réanimation'].map(t=>`<option>${t}</option>`).join('');
+  const severities = ['Mineur','Modéré','Grave','Critique'].map(s=>`<option>${s}</option>`).join('');
   modal(`<div class="modal-t">💉 Ajouter un Soin</div>
-    <div class="row"><div class="fg"><label>Type</label><select id="sType">${types}</select></div><div class="fg"><label>Docteur</label><input id="sDoc" value="${DB.user.name}"></div></div>
-    <div class="fg"><label>Titre / Diagnostic</label><input id="sTitle" placeholder="Ex: Fracture du bras droit"></div>
-    <div class="fg"><label>Notes / Traitement</label><textarea id="sNotes" placeholder="Détail des soins, prescriptions..."></textarea></div>
+    <div class="row"><div class="fg"><label>Type</label><select id="sType">${types}</select></div><div class="fg"><label>Gravité</label><select id="sSeverity"><option value="">—</option>${severities}</select></div></div>
+    <div class="fg"><label>Titre / Diagnostic</label><input id="sTitle" placeholder="Ex: Fracture du bras droit, Blessure par balle..."></div>
+    <div class="row"><div class="fg"><label>Médecin</label><input id="sDoc" value="${DB.user.name}"></div><div class="fg"><label>Lieu d'intervention</label><input id="sLoc" placeholder="Ex: Pillbox Hill, Del Perro..."></div></div>
+    <div class="fg"><label>Notes / Traitement administré</label><textarea id="sNotes" rows="3" placeholder="Détail des soins, médicaments administrés..."></textarea></div>
+    <div class="fg"><label>Prescription associée (optionnel)</label><input id="sPrescription" placeholder="Ex: Paracétamol 1g 3x/jour 5j"></div>
+    <div class="fg"><label>Suivi prévu (optionnel)</label><input id="sFollowup" placeholder="Ex: Contrôle dans 1 semaine"></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddSoin('${id}',${isTemp})">Enregistrer</button></div>`);
 }
 
@@ -2940,15 +3241,16 @@ function doAddSoin(id, isTemp) {
   const title = document.getElementById('sTitle').value || 'Soin';
   const doctor = document.getElementById('sDoc').value || DB.user.name;
   const notes = document.getElementById('sNotes').value || '—';
-  const badges = {'Consultation':'b-green','Soins':'b-red','Opération':'b-purple','Analyse':'b-blue','Urgence':'b-orange','Vaccination':'b-cyan','Rééducation':'b-gold'};
-  const entry = { date: new Date().toLocaleDateString('fr-FR'), type, title, doctor, notes, badge: badges[type]||'b-blue' };
+  const severity = document.getElementById('sSeverity').value || '';
+  const location = document.getElementById('sLoc').value || '';
+  const prescription = document.getElementById('sPrescription').value || '';
+  const followup = document.getElementById('sFollowup').value || '';
+  const badges = {'Consultation':'b-green','Soins':'b-red','Opération':'b-purple','Analyse':'b-blue','Urgence':'b-orange','Vaccination':'b-cyan','Rééducation':'b-gold','Transport sanitaire':'b-orange','Réanimation':'b-red'};
+  const entry = { date:new Date().toLocaleDateString('fr-FR'), type, title, doctor, notes, severity, location, prescription, followup, badge:badges[type]||'b-blue' };
 
-  if (isTemp) {
-    const p = DB.tempPatients[parseInt(id)];
-    if (p) p.history.unshift(entry);
-  } else {
-    if (DB.healthRecords[id]) DB.healthRecords[id].history.unshift(entry);
-  }
+  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(p)(p.history||[]).unshift(entry); }
+  else { if(DB.healthRecords[id]) DB.healthRecords[id].history.unshift(entry); }
+  markDirty('health_records','temp_patients');
   closeModal(); toast('Soin enregistré'); go('wpatients');
 }
 
@@ -2956,12 +3258,33 @@ function modalEditMedProfile(citizenId) {
   const rec = DB.healthRecords[citizenId];
   if (!rec) return;
   modal(`<div class="modal-t">✏️ Modifier le Profil Médical</div>
-    <div class="row"><div class="fg"><label>Groupe sanguin</label><select id="epBlood"><option ${rec.blood==='O+'?'selected':''}>O+</option><option ${rec.blood==='O-'?'selected':''}>O-</option><option ${rec.blood==='A+'?'selected':''}>A+</option><option ${rec.blood==='A-'?'selected':''}>A-</option><option ${rec.blood==='B+'?'selected':''}>B+</option><option ${rec.blood==='B-'?'selected':''}>B-</option><option ${rec.blood==='AB+'?'selected':''}>AB+</option><option ${rec.blood==='AB-'?'selected':''}>AB-</option><option ${rec.blood==='?'?'selected':''}>?</option></select></div><div class="fg"><label>Allergies</label><input id="epAllerg" value="${rec.allergies}"></div></div>
-    <div class="row"><div class="fg"><label>Taille</label><input id="epHeight" value="${rec.height}"></div><div class="fg"><label>Poids</label><input id="epWeight" value="${rec.weight}"></div></div>
-    <div class="fg"><label>Contact d'urgence</label><input id="epEmerg" value="${rec.emergency}"></div>
-    <div class="fg"><label>Pathologies / Conditions</label><input id="epCond" value="${rec.conditions}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const r=DB.healthRecords['${citizenId}'];r.blood=document.getElementById('epBlood').value;r.allergies=document.getElementById('epAllerg').value;r.height=document.getElementById('epHeight').value;r.weight=document.getElementById('epWeight').value;r.emergency=document.getElementById('epEmerg').value;r.conditions=document.getElementById('epCond').value;closeModal();toast('Profil mis à jour');go('wpatients')">Sauvegarder</button></div>`);
+    <div class="row"><div class="fg"><label>Groupe sanguin</label><select id="epBlood"><option ${rec.blood==='O+'?'selected':''}>O+</option><option ${rec.blood==='O-'?'selected':''}>O-</option><option ${rec.blood==='A+'?'selected':''}>A+</option><option ${rec.blood==='A-'?'selected':''}>A-</option><option ${rec.blood==='B+'?'selected':''}>B+</option><option ${rec.blood==='B-'?'selected':''}>B-</option><option ${rec.blood==='AB+'?'selected':''}>AB+</option><option ${rec.blood==='AB-'?'selected':''}>AB-</option><option ${rec.blood==='?'?'selected':''}>?</option></select></div><div class="fg"><label>Sexe</label><select id="epSex"><option ${rec.sex==='Homme'?'selected':''}>Homme</option><option ${rec.sex==='Femme'?'selected':''}>Femme</option><option ${rec.sex==='Autre'?'selected':''}>Autre</option><option ${!rec.sex||rec.sex==='Non renseigné'?'selected':''}>Non renseigné</option></select></div></div>
+    <div class="row"><div class="fg"><label>Date de naissance</label><input id="epDob" value="${rec.dob||''}" placeholder="JJ/MM/AAAA"></div><div class="fg"><label>N° Sécurité Sociale</label><input id="epSsn" value="${rec.ssn||''}" placeholder="XXX-XXX-XXX"></div></div>
+    <div class="row"><div class="fg"><label>Taille</label><input id="epHeight" value="${rec.height||''}" placeholder="Ex: 1m78"></div><div class="fg"><label>Poids</label><input id="epWeight" value="${rec.weight||''}" placeholder="Ex: 75kg"></div></div>
+    <div class="fg"><label>Allergies</label><input id="epAllerg" value="${rec.allergies||''}"></div>
+    <div class="fg"><label>Pathologies / Conditions chroniques</label><input id="epCond" value="${rec.conditions||''}"></div>
+    <div class="fg"><label>Contact d'urgence</label><input id="epEmerg" value="${rec.emergency||''}"></div>
+    <div class="fg"><label>Assurance</label><input id="epInsurance" value="${rec.insurance||''}" placeholder="Ex: San Andreas Health Plan"></div>
+    <div class="fg"><label>Adresse</label><input id="epAddress" value="${rec.address||''}" placeholder="Ex: 42 Strawberry Ave, LS"></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="doSaveMedProfile('${citizenId}')">Sauvegarder</button></div>`);
 }
+function doSaveMedProfile(citizenId) {
+  var r = DB.healthRecords[citizenId];
+  r.blood = document.getElementById('epBlood').value;
+  r.sex = document.getElementById('epSex').value;
+  r.dob = document.getElementById('epDob').value;
+  r.ssn = document.getElementById('epSsn').value;
+  r.height = document.getElementById('epHeight').value;
+  r.weight = document.getElementById('epWeight').value;
+  r.allergies = document.getElementById('epAllerg').value;
+  r.conditions = document.getElementById('epCond').value;
+  r.emergency = document.getElementById('epEmerg').value;
+  r.insurance = document.getElementById('epInsurance').value;
+  r.address = document.getElementById('epAddress').value;
+  markDirty('health_records');
+  closeModal(); toast('Profil médical mis à jour'); go('wpatients');
+}
+
 
 // ============ WORK: STOCK ============
 function pWStock() {
@@ -3011,7 +3334,7 @@ function pWStock() {
       <td><div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-green" onclick="modalRestockItem(${i})" title="Réappro">📦</button>
         <button class="btn btn-sm btn-outline" onclick="modalEditStock(${i})" title="Modifier">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${s.name}'+' du stock ?',function(){DB.job.stock.splice(${i},1);toast('Article supprimé');go('wstock')})" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${s.name}'+' du stock ?',function(){DB.job.stock.splice(${i},1);markDirty('enterprise_data');toast('Article supprimé');go('wstock')})" style="padding:.2rem .4rem">✕</button>
       </div></td>
     </tr>`;
   });
@@ -3025,7 +3348,7 @@ function modalAddStock() {
     <div class="row"><div class="fg"><label>Quantité</label><input type="number" id="asQty" value="0"></div><div class="fg"><label>Unité</label><input id="asUnit" placeholder="pcs, L, kg"></div></div>
     <div class="row"><div class="fg"><label>Seuil d'alerte</label><input type="number" id="asMin" value="10"></div><div class="fg"><label>Catégorie</label><input id="asCat" placeholder="Ex: Mécanique"></div></div>
     <div class="fg"><label>📝 Notes</label><input id="asNotes" placeholder="Fournisseur, remarques, infos..."></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.job.stock.push({id:Date.now(),name:document.getElementById('asName').value||'Nouveau',qty:parseInt(document.getElementById('asQty').value)||0,unit:document.getElementById('asUnit').value||'pcs',min:parseInt(document.getElementById('asMin').value)||10,cat:document.getElementById('asCat').value||'Autre',emoji:document.getElementById('asEmoji').value||'📦',notes:document.getElementById('asNotes').value||''});closeModal();toast('Article ajouté');go('wstock')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.job.stock.push({id:Date.now(),name:document.getElementById('asName').value||'Nouveau',qty:parseInt(document.getElementById('asQty').value)||0,unit:document.getElementById('asUnit').value||'pcs',min:parseInt(document.getElementById('asMin').value)||10,cat:document.getElementById('asCat').value||'Autre',emoji:document.getElementById('asEmoji').value||'📦',notes:document.getElementById('asNotes').value||''});closeModal();markDirty('enterprise_data');toast('Article ajouté');go('wstock')">Ajouter</button></div>`);
 }
 
 function modalEditStock(idx) {
@@ -3066,7 +3389,7 @@ function pWArticles() {
       <td class="mono" style="color:var(--gold)">$${ttc}</td>
       <td><div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-outline" onclick="modalEditArticle2(${i})">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${it.name}'+' ?',function(){DB.job.pos.splice(${i},1);toast('Article supprimé');go('warticles')})" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${it.name}'+' ?',function(){DB.job.pos.splice(${i},1);markDirty('enterprise_data');toast('Article supprimé');go('warticles')})" style="padding:.2rem .4rem">✕</button>
       </div></td>
     </tr>`;
   });
@@ -3083,7 +3406,7 @@ function modalAddArticle2() {
   modal(`<div class="modal-t">🏷️ Nouvel Article</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="a2Name" placeholder="Ex: Course Express"></div><div class="fg"><label>Emoji</label><input id="a2Emoji" value="🏷️" style="width:60px"></div></div>
     <div class="fg"><label>Prix ($)</label><input type="number" id="a2Price" placeholder="0"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('a2Name').value,p=parseInt(document.getElementById('a2Price').value);if(!n||!p){err('Nom et prix requis');return}DB.job.pos.push({name:n,price:p,emoji:document.getElementById('a2Emoji').value||'🏷️'});closeModal();toast(n+' ajouté à la caisse');go('warticles')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('a2Name').value,p=parseInt(document.getElementById('a2Price').value);if(!n||!p){err('Nom et prix requis');return}DB.job.pos.push({name:n,price:p,emoji:document.getElementById('a2Emoji').value||'🏷️'});closeModal();markDirty('enterprise_data');toast(n+' ajouté à la caisse');go('warticles')">Ajouter</button></div>`);
 }
 
 function modalEditArticle2(idx) {
@@ -3091,7 +3414,7 @@ function modalEditArticle2(idx) {
   modal(`<div class="modal-t">✏️ Modifier — ${it.name}</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="e2Name" value="${it.name}"></div><div class="fg"><label>Emoji</label><input id="e2Emoji" value="${it.emoji}" style="width:60px"></div></div>
     <div class="fg"><label>Prix ($)</label><input type="number" id="e2Price" value="${it.price}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const it=DB.job.pos[${idx}];it.name=document.getElementById('e2Name').value;it.emoji=document.getElementById('e2Emoji').value;it.price=parseInt(document.getElementById('e2Price').value)||0;closeModal();toast('Article mis à jour');go('warticles')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const it=DB.job.pos[${idx}];it.name=document.getElementById('e2Name').value;it.emoji=document.getElementById('e2Emoji').value;it.price=parseInt(document.getElementById('e2Price').value)||0;closeModal();markDirty('enterprise_data');toast('Article mis à jour');go('warticles')">Sauvegarder</button></div>`);
 }
 
 // ============ WORK: TEAM ============
@@ -3740,7 +4063,7 @@ function modalCreateEnt() {
   const citOpts = '<option value="">— Aucun patron pour le moment —</option>' + DB.citizens.map(c => `<option value="${c.id}">${c.name} (${c.id})${c.job?' — '+c.job:''}</option>`).join('');
   modal(`<div class="modal-t">🏢 Créer une Entreprise</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="ceNom" placeholder="Nom de l'entreprise"></div><div class="fg"><label>Icône</label><input id="ceIco" placeholder="🏢" value="🏢" style="width:60px"></div></div>
-    <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Autre</option></select></div>
+    <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Services Administratifs</option><option>Gouvernement</option><option>LSPD</option><option>SAMS</option><option>Autre</option></select></div>
     <div class="fg"><label>👔 Patron (optionnel)</label><select id="cePatronId">${citOpts}</select></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="createEnt()">Créer</button></div>`);
 }
@@ -3761,7 +4084,7 @@ function createEnt() {
 }
 function modalEditEnt(idx) {
   const e = DB.enterprises[idx];
-  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Autre'];
+  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Services Administratifs','Gouvernement','LSPD','SAMS','Autre'];
   const typeOpts = types.map(function(t){return '<option '+(t===e.type?'selected':'')+'>'+t+'</option>'}).join('');
   modal(`<div class="modal-t">✏️ Modifier — ${e.icon} ${e.name}</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="eeNom" value="${e.name}"></div><div class="fg"><label>Icône</label><input id="eeIco" value="${e.icon}" style="width:60px"></div></div>
@@ -4123,7 +4446,7 @@ function gCodes() {
         <td style="font-size:.78rem">${a.sanction.substring(0,40)}${a.sanction.length>40?'...':''}</td>
         <td><div style="display:flex;gap:.2rem">
           <button class="btn btn-sm btn-outline" onclick="modalEditArticle('${code.id}',${ai})">✏️</button>
-          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${a.ref}'+' ?',function(){DB.legalCodes[${ci}].articles.splice(${ai},1);toast('Article supprimé');goGov('gcodes')})" style="padding:.2rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${a.ref}'+' ?',function(){DB.legalCodes[${ci}].articles.splice(${ai},1);markDirty('legal_codes');toast('Article supprimé');goGov('gcodes')})" style="padding:.2rem .4rem">✕</button>
         </div></td>
       </tr>`;
     });
@@ -4132,7 +4455,7 @@ function gCodes() {
 
   h += `<div class="card"><div class="card-t">➕ Créer un Nouveau Code</div>
     <div class="row"><div class="fg"><label>Nom du code</label><input id="ncName" placeholder="Ex: Code Maritime"></div><div class="fg"><label>Icône</label><input id="ncIcon" placeholder="⚓" style="width:60px"></div><div class="fg"><label>Couleur</label><select id="ncColor"><option value="var(--red)">Rouge</option><option value="var(--blue)">Bleu</option><option value="var(--gold)">Or</option><option value="var(--green)">Vert</option><option value="var(--purple)">Violet</option><option value="var(--orange)">Orange</option><option value="var(--cyan)">Cyan</option></select></div></div>
-    <button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ncName').value;if(!n){err('Nom requis');return}DB.legalCodes.push({id:n.toLowerCase().replace(/\\s+/g,'_'),name:n,icon:document.getElementById('ncIcon').value||'📋',color:document.getElementById('ncColor').value,articles:[]});toast(n+' créé');goGov('gcodes')">Créer le Code</button>
+    <button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ncName').value;if(!n){err('Nom requis');return}DB.legalCodes.push({id:n.toLowerCase().replace(/\\s+/g,'_'),name:n,icon:document.getElementById('ncIcon').value||'📋',color:document.getElementById('ncColor').value,articles:[]});markDirty('legal_codes');toast(n+' créé');goGov('gcodes')">Créer le Code</button>
   </div>`;
   return h;
 }
@@ -4145,7 +4468,7 @@ function modalAddArticle(codeId) {
     <div class="fg"><label>Titre</label><input id="aaTitle" placeholder="Titre de l'article"></div>
     <div class="fg"><label>Description</label><textarea id="aaDesc" placeholder="Détail de l'article..."></textarea></div>
     <div class="fg"><label>Sanction applicable</label><input id="aaSanc" placeholder="Ex: Amende $5,000 + prison"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');c.articles.push({ref:document.getElementById('aaRef').value||'ART-?',title:document.getElementById('aaTitle').value||'Nouvel article',desc:document.getElementById('aaDesc').value||'—',sanction:document.getElementById('aaSanc').value||'—'});closeModal();toast('Article ajouté');goGov('gcodes')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');c.articles.push({ref:document.getElementById('aaRef').value||'ART-?',title:document.getElementById('aaTitle').value||'Nouvel article',desc:document.getElementById('aaDesc').value||'—',sanction:document.getElementById('aaSanc').value||'—'});closeModal();markDirty('legal_codes');toast('Article ajouté');goGov('gcodes')">Ajouter</button></div>`);
 }
 
 function modalEditArticle(codeId, artIdx) {
@@ -4156,7 +4479,7 @@ function modalEditArticle(codeId, artIdx) {
     <div class="fg"><label>Titre</label><input id="eaTitle" value="${a.title}"></div>
     <div class="fg"><label>Description</label><textarea id="eaDesc">${a.desc}</textarea></div>
     <div class="fg"><label>Sanction</label><input id="eaSanc" value="${a.sanction}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');const art=c.articles[${artIdx}];art.ref=document.getElementById('eaRef').value;art.title=document.getElementById('eaTitle').value;art.desc=document.getElementById('eaDesc').value;art.sanction=document.getElementById('eaSanc').value;closeModal();toast('Article mis à jour');goGov('gcodes')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');const art=c.articles[${artIdx}];art.ref=document.getElementById('eaRef').value;art.title=document.getElementById('eaTitle').value;art.desc=document.getElementById('eaDesc').value;art.sanction=document.getElementById('eaSanc').value;closeModal();markDirty('legal_codes');toast('Article mis à jour');goGov('gcodes')">Sauvegarder</button></div>`);
 }
 
 // ============ GOV: DEFCON ============
