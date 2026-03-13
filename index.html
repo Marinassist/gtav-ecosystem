@@ -249,220 +249,505 @@ tr:hover td{background:rgba(240,180,41,.02)}
 </div>
 
 <script>
+
 // ============ SUPABASE CLIENT ============
 const SUPABASE_URL = 'https://xodqbotgcglsbepglthd.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvZHFib3RnY2dsc2JlcGdsdGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTI1MjgsImV4cCI6MjA4ODcyODUyOH0.aLbZ_sOtSz5Ki8M4QrDg3Fz_aGYuMQf_BODRNL1SgbI';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ============ PERSISTENCE ============
+// ============ PERSISTENCE — TABLES INDIVIDUELLES ============
+// Plus de JSON global. Chaque table est indépendante.
+// localStorage = UNIQUEMENT la session (user_id, type)
+// Toutes les données vivent dans des tables Supabase séparées.
+
 let _saving = false;
-let _saveQueued = false;
-let _remoteSync = false;
 let _saveFails = 0;
 let _supabaseOK = false;
-let _useKV = false;
-let _kvTimestamps = {};
+const _dirty = new Set(); // Tables modifiées en attente de sauvegarde
+let _saveTimer = null;
 
-// ============ PER-ENTERPRISE STORAGE (shared_kv) ============
-async function detectKV() {
-  try { var r = await sb.from('shared_kv').select('key').limit(1); return !r.error; }
-  catch(e) { return false; }
-}
-async function saveEntKV(entName, data) {
-  try {
-    var who = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
-    var r = await sb.from('shared_kv').upsert({ key: 'job:' + entName, data: data, updated_at: new Date().toISOString(), updated_by: who });
-    return !r.error;
-  } catch(e) { return false; }
-}
-async function deleteEntKV(entName) {
-  try { await sb.from('shared_kv').delete().eq('key', 'job:' + entName); } catch(e) {}
-}
-async function loadEntsKV() {
-  try {
-    var r = await sb.from('shared_kv').select('key,data,updated_at').like('key', 'job:%');
-    if (r.error || !r.data || !r.data.length) return false;
-    r.data.forEach(function(row) {
-      var entName = row.key.substring(4);
-      DB.allJobs[entName] = row.data;
-      _kvTimestamps[entName] = row.updated_at;
-    });
-    return true;
-  } catch(e) { return false; }
-}
-async function pollEntsKV() {
-  try {
-    var r = await sb.from('shared_kv').select('key,data,updated_at,updated_by').like('key', 'job:%');
-    if (r.error || !r.data) return;
-    var myEnt = DB.user && DB.user.job ? DB.user.job : '';
-    var myId = DB.user ? DB.user.id : '';
-    var recentSave = (Date.now() - _lastSave < 20000);
-    r.data.forEach(function(row) {
-      var entName = row.key.substring(4);
-      if (row.updated_at === _kvTimestamps[entName]) return; // unchanged
-      _kvTimestamps[entName] = row.updated_at;
-      if (entName === myEnt && recentSave && row.updated_by === myId) return; // my own save
-      if (entName === myEnt && recentSave) {
-        // Accept employee/grade changes (gov decisions) but protect my work data
-        if (DB.allJobs[entName] && row.data) {
-          DB.allJobs[entName].employees = row.data.employees;
-          DB.allJobs[entName].grades = row.data.grades;
-          DB.allJobs[entName].pendingApps = row.data.pendingApps;
-        }
-        return;
-      }
-      DB.allJobs[entName] = row.data;
-    });
-  } catch(e) {}
+function _who() {
+  return DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
 }
 
-function getPayload() {
-  return {
-    citizens: DB.citizens, allJobs: DB.allJobs, enterprises: DB.enterprises,
-    laws: DB.laws, decrees: DB.decrees, defcon: DB.defcon, defconLog: DB.defconLog,
-    legalCodes: DB.legalCodes, healthRecords: DB.healthRecords,
-    citizenSalaries: DB.citizenSalaries, tempPatients: DB.tempPatients,
-    taxConfig: DB.taxConfig, govBudget: DB.govBudget,
-    govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault, defconProtos: DB.defconProtos,
-    govAccounts: DB.govAccounts, announcements: DB.announcements, messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
-  };
+// Marquer une table comme modifiée
+function markDirty() {
+  // Accepte un ou plusieurs noms de tables
+  for (var i = 0; i < arguments.length; i++) _dirty.add(arguments[i]);
+  _scheduleSave();
 }
 
-var _lastSave = 0;
-function saveDB() {
-  if (_remoteSync) return;
-  _lastSave = Date.now();
-  var payload = getPayload();
-  payload._ts = _lastSave;
-  // ALWAYS save to localStorage (instant, full state including allJobs)
-  try { localStorage.setItem('sa_data', JSON.stringify(payload)); } catch(e) {}
-  // Try Supabase in background
-  if (_saving) { _saveQueued = true; return; }
+function _scheduleSave() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(function() { flushDirty(); }, 600);
+}
+
+// ============ SAUVEGARDE PAR TABLE ============
+async function flushDirty() {
+  if (_dirty.size === 0 || _saving) return;
   _saving = true;
-  var who = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
+  var tables = Array.from(_dirty);
+  _dirty.clear();
+  var who = _who();
+  var ts = new Date().toISOString();
+  var hadError = false;
 
-  // Build core payload — if using KV, strip allJobs from core (each enterprise is separate)
-  var corePayload = payload;
-  if (_useKV) {
-    corePayload = JSON.parse(JSON.stringify(payload));
-    delete corePayload.allJobs;
-  }
-
-  // 1) Save core to shared_state via RPC
-  var coreP = sb.rpc('set_shared_state', { new_data: corePayload, who: who })
-    .then(function(res) { return !res.error; }).catch(function() { return false; });
-
-  // 2) Save enterprise(s) to shared_kv (per-enterprise, no collision)
-  var entPs = [];
-  if (_useKV) {
-    var myEnt = DB.user && DB.user.job ? DB.user.job : '';
-    if (myEnt && DB.allJobs[myEnt]) {
-      entPs.push(saveEntKV(myEnt, DB.allJobs[myEnt]));
+  for (var i = 0; i < tables.length; i++) {
+    try {
+      await _saveTable(tables[i], who, ts);
+    } catch(e) {
+      console.error('Save error:', tables[i], e);
+      _dirty.add(tables[i]); // Re-mark for retry
+      hadError = true;
     }
-    // Gov saves ALL enterprises
-    if (DB.govUser) {
-      Object.keys(DB.allJobs).forEach(function(entName) {
-        if (entName !== myEnt) entPs.push(saveEntKV(entName, DB.allJobs[entName]));
+  }
+  _saving = false;
+  if (hadError) { _saveFails++; updateSyncBadge('err'); }
+  else { _saveFails = 0; updateSyncBadge('ok'); }
+}
+
+async function _saveTable(name, who, ts) {
+  switch(name) {
+    case 'citizens': await _saveCitizens(who, ts); break;
+    case 'messages': await _saveMessages(who, ts); break;
+    case 'enterprises': await _saveEnterprises(who, ts); break;
+    case 'enterprise_data': await _saveAllEnterpriseData(who, ts); break;
+    case 'jobs': await _saveJobs(who, ts); break;
+    case 'announcements': await _saveAnnouncements(who, ts); break;
+    case 'laws': await _saveLaws(who, ts); break;
+    case 'voted': await _saveVoted(who, ts); break;
+    case 'decrees': await _saveDecrees(who, ts); break;
+    case 'gov_accounts': await _saveGovAccounts(who, ts); break;
+    case 'health_records': await _saveHealthRecords(who, ts); break;
+    case 'citizen_salaries': await _saveCitizenSalaries(who, ts); break;
+    case 'gov_budget': await _saveGovBudget(who, ts); break;
+    case 'tax_config': await _saveTaxConfig(who, ts); break;
+    case 'gov_tax_declarations': await _saveGovTaxDeclarations(who, ts); break;
+    case 'vault': await _saveVault(who, ts); break;
+    case 'defcon_state': await _saveDefcon(who, ts); break;
+    case 'temp_patients': await _saveTempPatients(who, ts); break;
+  }
+}
+
+// --- Individual table save functions ---
+async function _saveCitizens(who, ts) {
+  var rows = DB.citizens.map(function(c) {
+    return { id:c.id, name:c.name, phone:c.phone, pass:c.pass, registered:c.registered, job:c.job, role:c.role, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('citizens').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveMessages(who, ts) {
+  var rows = DB.messages.map(function(m) {
+    return { id:m.id, from_name:m.from, from_id:m.fromId, to_name:m.to, to_id:m.toId, to_enterprise:m.toEnterprise, icon:m.icon, subject:m.subject, body:m.body, date:m.date, read:!!m.read, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('messages').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveEnterprises(who, ts) {
+  var rows = DB.enterprises.map(function(e) {
+    return { id:e.id, name:e.name, icon:e.icon, type:e.type, patron:e.patron, patron_id:e.patronId, status:e.status, created:e.created, employees:e.employees||0, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('enterprises').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveAllEnterpriseData(who, ts) {
+  var names = Object.keys(DB.allJobs);
+  for (var i = 0; i < names.length; i++) {
+    await _saveOneEnterpriseData(names[i], who, ts);
+  }
+}
+
+async function _saveOneEnterpriseData(entName, who, ts) {
+  if (!who) { who = _who(); ts = new Date().toISOString(); }
+  var d = DB.allJobs[entName];
+  if (!d) return;
+  var row = {
+    enterprise_name: entName, icon: d.icon || '🏢',
+    grades: d.grades, employees: d.employees, pos: d.pos,
+    invoices: d.invoices, weekly_history: d.weeklyHistory,
+    pending_apps: d.pendingApps, employee_expenses: d.employeeExpenses,
+    company_expenses: d.companyExpenses, tax_declarations: d.taxDeclarations,
+    stock: d.stock, internal_messages: d.internalMessages,
+    hr_records: d.hrRecords, service_log: d.serviceLog,
+    info: d.info || {},
+    updated_at: ts, updated_by: who
+  };
+  var res = await sb.from('enterprise_data').upsert(row, { onConflict:'enterprise_name' });
+  if (res.error) throw res.error;
+}
+
+async function _saveJobs(who, ts) {
+  var rows = DB.jobs.map(function(j) {
+    return { id:j.id, company:j.company, icon:j.icon, role:j.role, salary:j.salary, slots:j.slots, description:j.desc, posted_by:j.postedBy, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('jobs').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveAnnouncements(who, ts) {
+  var rows = DB.announcements.map(function(a) {
+    return { id:a.id, title:a.title, body:a.body, icon:a.icon, company:a.company, author:a.author, date:a.date, poll:a.poll||[], votes:a.votes||{}, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('announcements').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveLaws(who, ts) {
+  var rows = DB.laws.map(function(l) {
+    return { id:l.id, title:l.title, description:l.desc, status:l.status, deadline:l.deadline, pour:l.pour, contre:l.contre, total:l.total, choices:l.choices||null, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('laws').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveVoted(who, ts) {
+  var rows = [];
+  Object.keys(DB.voted).forEach(function(lawId) {
+    var v = DB.voted[lawId];
+    if (typeof v === 'string') {
+      // Old format: voted[lawId] = choice (for current user)
+      var cid = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : '');
+      if (cid) rows.push({ citizen_id:cid, law_id:parseInt(lawId), choice:v });
+    } else if (typeof v === 'object') {
+      // Extended format
+      Object.keys(v).forEach(function(cid) {
+        rows.push({ citizen_id:cid, law_id:parseInt(lawId), choice:v[cid] });
       });
     }
-  }
-
-  Promise.all([coreP].concat(entPs)).then(function(results) {
-    _saving = false;
-    if (results.every(function(r){return r})) { _saveFails = 0; _supabaseOK = true; updateSyncBadge('ok'); }
-    else { _saveFails++; updateSyncBadge('err'); }
-    if (_saveQueued) { _saveQueued = false; setTimeout(function(){saveDB()}, 500); }
-  }).catch(function() {
-    _saving = false; _saveFails++;
-    updateSyncBadge('err');
-    setTimeout(function() { if (_saveQueued || _saveFails > 0) { _saveQueued = false; saveDB(); } }, 5000);
   });
+  if (rows.length) {
+    var res = await sb.from('voted').upsert(rows, { onConflict:'citizen_id,law_id' });
+    if (res.error) throw res.error;
+  }
 }
 
+async function _saveDecrees(who, ts) {
+  var rows = DB.decrees.map(function(d) {
+    return { id:d.id||Date.now(), code:d.code, title:d.title, body:d.body, date:d.date, author:d.author, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('decrees').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveGovAccounts(who, ts) {
+  var rows = DB.govAccounts.map(function(a) {
+    return { id:a.id, name:a.name, pass:a.code||a.pass, created:a.created, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('gov_accounts').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveHealthRecords(who, ts) {
+  var rows = [];
+  Object.keys(DB.healthRecords).forEach(function(cid) {
+    rows.push({ citizen_id:cid, data:DB.healthRecords[cid], updated_at:ts, updated_by:who });
+  });
+  if (rows.length) {
+    var res = await sb.from('health_records').upsert(rows, { onConflict:'citizen_id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveCitizenSalaries(who, ts) {
+  var rows = [];
+  Object.keys(DB.citizenSalaries).forEach(function(cid) {
+    rows.push({ citizen_id:cid, data:DB.citizenSalaries[cid], updated_at:ts, updated_by:who });
+  });
+  if (rows.length) {
+    var res = await sb.from('citizen_salaries').upsert(rows, { onConflict:'citizen_id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveGovBudget(who, ts) {
+  var res = await sb.from('gov_budget').upsert({
+    id:1, balance:DB.govBudget.balance, income:DB.govBudget.income,
+    expenses:DB.govBudget.expenses, investments:DB.govBudget.investments,
+    updated_at:ts, updated_by:who
+  }, { onConflict:'id' });
+  if (res.error) throw res.error;
+}
+
+async function _saveTaxConfig(who, ts) {
+  var res = await sb.from('tax_config').upsert({
+    id:1, tva:DB.taxConfig.tva, tranches:DB.taxConfig.tranches,
+    updated_at:ts, updated_by:who
+  }, { onConflict:'id' });
+  if (res.error) throw res.error;
+}
+
+async function _saveGovTaxDeclarations(who, ts) {
+  var rows = DB.govTaxDeclarations.map(function(d) {
+    return { id:d.id||Date.now(), enterprise:d.enterprise, data:d, date:d.date, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('gov_tax_declarations').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveVault(who, ts) {
+  var rows = DB.vault.map(function(v) {
+    return { id:v.id, name:v.name, classification:v.classification, author:v.author, date:v.date, pages:v.pages||[], updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('vault').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+async function _saveDefcon(who, ts) {
+  var res = await sb.from('defcon_state').upsert({
+    id:1, level:DB.defcon, log:DB.defconLog, protos:DB.defconProtos||{},
+    updated_at:ts, updated_by:who
+  }, { onConflict:'id' });
+  if (res.error) throw res.error;
+}
+
+async function _saveTempPatients(who, ts) {
+  var rows = DB.tempPatients.map(function(p, i) {
+    return { id:p.id||i, data:p, updated_at:ts, updated_by:who };
+  });
+  if (rows.length) {
+    var res = await sb.from('temp_patients').upsert(rows, { onConflict:'id' });
+    if (res.error) throw res.error;
+  }
+}
+
+// ============ SUPPRESSION EXPLICITE ============
+async function dbDelete(table, col, val) {
+  try {
+    await sb.from(table).delete().eq(col, val);
+  } catch(e) { console.error('Delete error:', table, col, val, e); }
+}
+async function dbDeleteIn(table, col, vals) {
+  try {
+    if (vals.length) await sb.from(table).delete().in(col, vals);
+  } catch(e) { console.error('Delete error:', table, e); }
+}
+
+// ============ CHARGEMENT DEPUIS TABLES INDIVIDUELLES ============
 async function loadFromSupabase() {
   try {
-    // 1. Load core from shared_state via RPC
-    var res = await sb.rpc('get_shared_state');
-    if (!res.error && res.data && typeof res.data === 'object' && res.data.citizens) {
-      var d = res.data;
-      Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
-      _supabaseOK = true;
+    var results = await Promise.all([
+      sb.from('citizens').select('*'),
+      sb.from('messages').select('*').order('id', {ascending:false}),
+      sb.from('enterprises').select('*'),
+      sb.from('enterprise_data').select('*'),
+      sb.from('jobs').select('*'),
+      sb.from('announcements').select('*').order('id', {ascending:false}),
+      sb.from('laws').select('*').order('id', {ascending:false}),
+      sb.from('voted').select('*'),
+      sb.from('decrees').select('*').order('id', {ascending:false}),
+      sb.from('gov_accounts').select('*'),
+      sb.from('health_records').select('*'),
+      sb.from('citizen_salaries').select('*'),
+      sb.from('gov_budget').select('*').eq('id', 1).single(),
+      sb.from('tax_config').select('*').eq('id', 1).single(),
+      sb.from('gov_tax_declarations').select('*'),
+      sb.from('vault').select('*'),
+      sb.from('defcon_state').select('*').eq('id', 1).single(),
+      sb.from('temp_patients').select('*'),
+    ]);
 
-      // 2. Try loading per-enterprise data from shared_kv (overrides allJobs from core)
-      if (_useKV) {
-        var kvLoaded = await loadEntsKV();
-        if (!kvLoaded && d.allJobs) {
-          // Migration: shared_kv exists but empty, shared_state has allJobs → migrate
-          DB.allJobs = d.allJobs;
-          Object.keys(DB.allJobs).forEach(function(entName) { saveEntKV(entName, DB.allJobs[entName]); });
-          console.log('Migration entreprises vers shared_kv');
-        }
-      }
-      return true;
+    var hasData = false;
+
+    // Citizens
+    if (results[0].data && results[0].data.length) {
+      DB.citizens = results[0].data.map(function(c) {
+        return { id:c.id, name:c.name, phone:c.phone, pass:c.pass, registered:c.registered, job:c.job, role:c.role };
+      });
+      hasData = true;
     }
-    if (!res.error) _supabaseOK = true;
-    return false;
+
+    // Messages
+    if (results[1].data && results[1].data.length) {
+      DB.messages = results[1].data.map(function(m) {
+        return { id:m.id, from:m.from_name, fromId:m.from_id, to:m.to_name, toId:m.to_id, toEnterprise:m.to_enterprise, icon:m.icon, subject:m.subject, body:m.body, date:m.date, read:m.read };
+      });
+    }
+
+    // Enterprises
+    if (results[2].data && results[2].data.length) {
+      DB.enterprises = results[2].data.map(function(e) {
+        return { id:e.id, name:e.name, icon:e.icon, type:e.type, patron:e.patron, patronId:e.patron_id, status:e.status, created:e.created, employees:e.employees||0 };
+      });
+    }
+
+    // Enterprise data (allJobs)
+    if (results[3].data && results[3].data.length) {
+      DB.allJobs = {};
+      results[3].data.forEach(function(d) {
+        DB.allJobs[d.enterprise_name] = {
+          company: d.enterprise_name, icon: d.icon || '🏢',
+          grades: d.grades || [], employees: d.employees || [],
+          pos: d.pos || [], invoices: d.invoices || [],
+          weeklyHistory: d.weekly_history || [],
+          pendingApps: d.pending_apps || [],
+          employeeExpenses: d.employee_expenses || [],
+          companyExpenses: d.company_expenses || [],
+          taxDeclarations: d.tax_declarations || [],
+          stock: d.stock || [],
+          internalMessages: d.internal_messages || [],
+          hrRecords: d.hr_records || [],
+          serviceLog: d.service_log || [],
+          info: d.info || {},
+        };
+      });
+    }
+
+    // Jobs
+    if (results[4].data) {
+      DB.jobs = results[4].data.map(function(j) {
+        return { id:j.id, company:j.company, icon:j.icon, role:j.role, salary:j.salary, slots:j.slots, desc:j.description, postedBy:j.posted_by };
+      });
+    }
+
+    // Announcements
+    if (results[5].data) {
+      DB.announcements = results[5].data.map(function(a) {
+        return { id:a.id, title:a.title, body:a.body, icon:a.icon, company:a.company, author:a.author, date:a.date, poll:a.poll||[], votes:a.votes||{} };
+      });
+    }
+
+    // Laws
+    if (results[6].data) {
+      DB.laws = results[6].data.map(function(l) {
+        return { id:l.id, title:l.title, desc:l.description, status:l.status, deadline:l.deadline, pour:l.pour, contre:l.contre, total:l.total, choices:l.choices };
+      });
+    }
+
+    // Voted
+    if (results[7].data) {
+      DB.voted = {};
+      results[7].data.forEach(function(v) {
+        DB.voted[v.law_id] = v.choice;
+      });
+    }
+
+    // Decrees
+    if (results[8].data) {
+      DB.decrees = results[8].data.map(function(d) {
+        return { id:d.id, code:d.code, title:d.title, body:d.body, date:d.date, author:d.author };
+      });
+    }
+
+    // Gov accounts
+    if (results[9].data) {
+      DB.govAccounts = results[9].data.map(function(a) {
+        return { id:a.id, name:a.name, code:a.pass, created:a.created };
+      });
+    }
+
+    // Health records
+    if (results[10].data) {
+      DB.healthRecords = {};
+      results[10].data.forEach(function(h) { DB.healthRecords[h.citizen_id] = h.data; });
+    }
+
+    // Citizen salaries
+    if (results[11].data) {
+      DB.citizenSalaries = {};
+      results[11].data.forEach(function(s) { DB.citizenSalaries[s.citizen_id] = s.data; });
+    }
+
+    // Gov budget
+    if (results[12].data) {
+      var b = results[12].data;
+      DB.govBudget = { balance:b.balance||0, income:b.income||[], expenses:b.expenses||[], investments:b.investments||[] };
+    }
+
+    // Tax config
+    if (results[13].data) {
+      var t = results[13].data;
+      DB.taxConfig = { tva:t.tva||5, tranches:t.tranches||DB.taxConfig.tranches };
+    }
+
+    // Gov tax declarations
+    if (results[14].data) {
+      DB.govTaxDeclarations = results[14].data.map(function(d) { return d.data || d; });
+    }
+
+    // Vault
+    if (results[15].data) {
+      DB.vault = results[15].data.map(function(v) {
+        return { id:v.id, name:v.name, classification:v.classification, author:v.author, date:v.date, pages:v.pages||[] };
+      });
+    }
+
+    // Defcon
+    if (results[16].data) {
+      var dc = results[16].data;
+      DB.defcon = dc.level || 5;
+      DB.defconLog = dc.log || [];
+      DB.defconProtos = dc.protos || {};
+    }
+
+    // Temp patients
+    if (results[17].data) {
+      DB.tempPatients = results[17].data.map(function(p) { return p.data || p; });
+    }
+
+    _supabaseOK = true;
+    return hasData || results.some(function(r) { return r.data && (Array.isArray(r.data) ? r.data.length > 0 : true); });
+
   } catch(e) {
+    console.error('Load error:', e);
     return false;
   }
 }
 
-function loadFromLocal() {
+// ============ VERSIONING : Vérifier avant mise à jour ============
+async function checkVersion(table, idCol, idVal, oldUpdatedAt) {
   try {
-    var raw = localStorage.getItem('sa_data');
-    if (raw) {
-      var d = JSON.parse(raw);
-      if (d && d.citizens && d.citizens.length > 0) {
-        Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
-        return true;
+    var res = await sb.from(table).select('updated_at').eq(idCol, idVal).single();
+    if (res.data && res.data.updated_at && oldUpdatedAt) {
+      if (res.data.updated_at !== oldUpdatedAt) {
+        toast('⚠️ Données modifiées par quelqu\'un d\'autre. Rafraîchissement...', 'warn');
+        await pollForChanges();
+        return false;
       }
     }
   } catch(e) {}
-  return false;
+  return true;
 }
+
+// Nettoyer l'ancien cache localStorage (migration one-shot)
+try { localStorage.removeItem('sa_data'); localStorage.removeItem('sa_lastLogin'); } catch(e) {}
 
 function resetAllData() {
-  localStorage.removeItem('sa_data');
-  localStorage.removeItem('sa_lastLogin');
-  sb.rpc('set_shared_state', { new_data: {} }).then(function() { location.reload(); }).catch(function() { location.reload(); });
-}
-
-function showOfflineBanner() {
-  var existing = document.getElementById('offlineBanner');
-  if (existing) existing.remove();
-  var banner = document.createElement('div');
-  banner.id = 'offlineBanner';
-  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:linear-gradient(135deg,#b45309,#d97706);color:#fff;padding:.8rem 1.2rem;display:flex;align-items:center;justify-content:center;gap:1rem;font-family:inherit;font-size:.88rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.4);animation:slideDown .4s ease';
-  banner.innerHTML = '<span>\u26A0\uFE0F Connexion Supabase indisponible — Données chargées depuis le cache local (possiblement obsolètes)</span><button onclick="forceSupabaseSync()" style="background:#fff;color:#b45309;border:none;padding:.4rem 1rem;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer;white-space:nowrap">\u{1F504} SYNCHRONISER MAINTENANT</button><button onclick="this.parentElement.remove()" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:.3rem .7rem;border-radius:4px;font-size:.78rem;cursor:pointer">\u2715</button>';
-  document.body.appendChild(banner);
-  // Add animation
-  var style = document.createElement('style');
-  style.textContent = '@keyframes slideDown{from{transform:translateY(-100%)}to{transform:translateY(0)}}';
-  document.head.appendChild(style);
-}
-
-async function forceSupabaseSync() {
-  var banner = document.getElementById('offlineBanner');
-  if (banner) banner.innerHTML = '<span>\u{23F3} Synchronisation en cours...</span>';
-  try {
-    var ok = await Promise.race([
-      loadFromSupabase(),
-      new Promise(function(r) { setTimeout(function() { r(false); }, 5000); })
-    ]);
-    if (ok) {
-      if (_useKV) { try { await loadEntsKV(); } catch(e) {} }
-      try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
-      if (DB.user) { try { loadJob(); buildNav(); renderPage(); } catch(e) {} }
-      if (DB.govUser) { try { goGov(DB.govUser._lastPage || 'gdash'); } catch(e) {} }
-      if (banner) banner.remove();
-      updateSyncBadge('ok');
-      toast('\u2705 Données synchronisées depuis Supabase');
-    } else {
-      if (banner) banner.innerHTML = '<span>\u274C Supabase toujours indisponible — Réessayez plus tard</span><button onclick="forceSupabaseSync()" style="background:#fff;color:#b45309;border:none;padding:.4rem 1rem;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer">\u{1F504} RÉESSAYER</button><button onclick="this.parentElement.remove()" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:.3rem .7rem;border-radius:4px;font-size:.78rem;cursor:pointer">\u2715</button>';
-    }
-  } catch(e) {
-    if (banner) banner.innerHTML = '<span>\u274C Erreur réseau — Réessayez</span><button onclick="forceSupabaseSync()" style="background:#fff;color:#b45309;border:none;padding:.4rem 1rem;border-radius:6px;font-weight:700;font-size:.82rem;cursor:pointer">\u{1F504} RÉESSAYER</button><button onclick="this.parentElement.remove()" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:.3rem .7rem;border-radius:4px;font-size:.78rem;cursor:pointer">\u2715</button>';
-  }
+  localStorage.removeItem('sa_session');
+  // Truncate all tables
+  Promise.all([
+    sb.from('citizens').delete().neq('id','__none__'),
+    sb.from('messages').delete().neq('id',0),
+    sb.from('enterprises').delete().neq('id','__none__'),
+    sb.from('enterprise_data').delete().neq('enterprise_name','__none__'),
+    sb.from('jobs').delete().neq('id',0),
+    sb.from('announcements').delete().neq('id',0),
+    sb.from('laws').delete().neq('id',0),
+    sb.from('decrees').delete().neq('id',0),
+  ]).then(function() { location.reload(); }).catch(function() { location.reload(); });
 }
 
 function updateSyncBadge(state) {
@@ -471,7 +756,7 @@ function updateSyncBadge(state) {
     el = document.createElement('div');
     el.id = 'syncBadge';
     el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.65rem;padding:.3rem .6rem;border-radius:6px;z-index:9999;cursor:pointer;transition:all .3s';
-    el.onclick = function() { _saveFails=0; saveDB(); toast('Synchronisation forcée...'); };
+    el.onclick = function() { _saveFails=0; markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','decrees','gov_budget','tax_config','defcon_state','vault'); toast('Synchronisation forcée...'); };
     el.title = 'Cliquez pour forcer la synchronisation';
     document.body.appendChild(el);
   }
@@ -480,242 +765,147 @@ function updateSyncBadge(state) {
     el.textContent='\u{1F7E2} Sync OK';
     clearTimeout(el._t); el._t = setTimeout(function() { el.style.opacity='.4'; }, 3000);
     el.style.opacity='1';
-    // Auto-dismiss offline banner if it was showing
-    var ob = document.getElementById('offlineBanner');
-    if (ob) { ob.style.transition='opacity .5s'; ob.style.opacity='0'; setTimeout(function(){ob.remove()},600); }
+  } else if (state === 'saving') {
+    el.style.background='rgba(59,130,246,.15)'; el.style.color='#3b82f6'; el.style.opacity='1';
+    el.textContent='\u{1F504} Envoi...';
   } else {
     el.style.background='rgba(239,68,68,.2)'; el.style.color='#ef4444'; el.style.opacity='1';
-    el.textContent='\u{1F534} Hors ligne (' + _saveFails + ') — Cliquez ici';
+    el.textContent='\u{1F534} Erreur sync (' + _saveFails + ') — Cliquez ici';
   }
 }
 
-// ============ REALTIME ============
+// ============ POLLING : LIRE TABLES INDIVIDUELLES ============
+// Notification helpers (sound + banner)
+function playNotifSound(type) { try { var ctx=new (window.AudioContext||window.webkitAudioContext)(); var o=ctx.createOscillator(); var g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.value=type==='message'?880:660; g.gain.value=0.08; o.start(); o.stop(ctx.currentTime+0.12); } catch(e){} }
+function showNotifBanner(msg) { var b=document.createElement('div'); b.style.cssText='position:fixed;top:.7rem;right:.7rem;background:var(--bg3);border:1px solid var(--gold);color:var(--t1);padding:.55rem 1rem;border-radius:8px;font-size:.82rem;z-index:9999;animation:toastIn .3s ease,toastOut .3s ease 4s forwards;display:flex;align-items:center;gap:.4rem;max-width:350px'; b.innerHTML=msg; document.body.appendChild(b); setTimeout(function(){b.remove()},4500); }
 var _lastSync = 0;
-var _pendingSync = null;
-function setupRealtime() {
-  // Polling every 15s — always works, no dependency on Supabase Realtime
-  _notifCounts = {msg: DB.messages ? DB.messages.length : 0, ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
-  setInterval(function() { pollForChanges(); }, 15000);
-  // Also try Supabase Realtime as bonus
-  try {
-    sb.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, function(payload) {
-      if (DB.user && payload.new.updated_by === DB.user.id) return;
-      var now = Date.now();
-      if (now - _lastSync < 10000) return;
-      applyRemoteSync(payload.new.data);
-    }).subscribe();
-  } catch(e) {}
-}
 var _notifCounts = {msg:0, ann:0, dec:0};
+
+function setupRealtime() {
+  _notifCounts = {msg: DB.messages ? DB.messages.length : 0, ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
+  // Polling toutes les 10s — lit les tables individuelles
+  setInterval(function() { pollForChanges(); }, 10000);
+}
+
 async function pollForChanges() {
+  if (_saving) return;
   try {
-    var res = await sb.rpc('get_shared_state');
-    if (res.error || !res.data) return;
-    var d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-    if (!d || !d.citizens) return;
+    // Load key tables that other users might modify
+    var results = await Promise.all([
+      sb.from('citizens').select('*'),
+      sb.from('messages').select('*').order('id', {ascending:false}),
+      sb.from('enterprises').select('*'),
+      sb.from('announcements').select('*').order('id', {ascending:false}),
+      sb.from('decrees').select('*').order('id', {ascending:false}),
+      sb.from('laws').select('*').order('id', {ascending:false}),
+      sb.from('defcon_state').select('*').eq('id', 1).single(),
+      sb.from('jobs').select('*'),
+    ]);
 
-    // Count messages FOR ME in remote data vs local
+    _supabaseOK = true;
     var myId = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : null);
-    var myEnt = '';
-    if (myId && d.citizens) {
-      var myCit = d.citizens.find(function(c){return c.id===myId});
-      if (myCit) myEnt = myCit.job || '';
-    }
 
-    // Count my messages in remote
-    var remoteMyMsgs = 0;
-    if (d.messages && myId) {
-      d.messages.forEach(function(m) {
-        if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteMyMsgs++;
+    // Update citizens (preserve local changes if saving)
+    if (results[0].data) {
+      DB.citizens = results[0].data.map(function(c) {
+        return { id:c.id, name:c.name, phone:c.phone, pass:c.pass, registered:c.registered, job:c.job, role:c.role };
       });
     }
-    // Count my messages locally
-    var localMyMsgs = 0;
-    if (DB.messages && myId) {
-      DB.messages.forEach(function(m) {
-        if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) localMyMsgs++;
+
+    // Notifications for messages
+    if (results[1].data) {
+      var remoteMsgs = results[1].data.map(function(m) {
+        return { id:m.id, from:m.from_name, fromId:m.from_id, to:m.to_name, toId:m.to_id, toEnterprise:m.to_enterprise, icon:m.icon, subject:m.subject, body:m.body, date:m.date, read:m.read };
+      });
+      var myEnt = '';
+      if (myId) { var myCit = DB.citizens.find(function(c){return c.id===myId}); if (myCit) myEnt = myCit.job || ''; }
+      var remoteMyMsgs = 0, localMyMsgs = 0;
+      remoteMsgs.forEach(function(m) { if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteMyMsgs++; });
+      DB.messages.forEach(function(m) { if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) localMyMsgs++; });
+      var newMsgsForMe = remoteMyMsgs - localMyMsgs;
+      if (newMsgsForMe > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgsForMe + ' nouveau' + (newMsgsForMe>1?'x':'') + ' message' + (newMsgsForMe>1?'s':'')); }
+      DB.messages = remoteMsgs;
+    }
+
+    // Enterprises
+    if (results[2].data) {
+      DB.enterprises = results[2].data.map(function(e) {
+        return { id:e.id, name:e.name, icon:e.icon, type:e.type, patron:e.patron, patronId:e.patron_id, status:e.status, created:e.created, employees:e.employees||0 };
       });
     }
-    var newMsgsForMe = remoteMyMsgs - localMyMsgs;
 
-    var newAnns = (d.announcements ? d.announcements.length : 0) - _notifCounts.ann;
-    var newDecs = (d.decrees ? d.decrees.length : 0) - _notifCounts.dec;
-
-    // Notify only if relevant to me
-    if (newMsgsForMe > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgsForMe + ' nouveau' + (newMsgsForMe>1?'x':'') + ' message' + (newMsgsForMe>1?'s':'')); }
-    else if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
-    else if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
-
-    // Update counts
-    _notifCounts.ann = d.announcements ? d.announcements.length : 0;
-    _notifCounts.dec = d.decrees ? d.decrees.length : 0;
-
-    // Always merge remote data (smart merge protects local work data)
-    applyRemoteSync(d);
-
-    // 2. Poll per-enterprise data from shared_kv (isolated, no collision)
-    if (_useKV) {
-      await pollEntsKV();
-      // Re-render and update localStorage with merged data
-      try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
-      if (DB.user) { try { loadJob(); } catch(e) {} }
+    // Announcements
+    if (results[3].data) {
+      var newAnns = results[3].data.length - _notifCounts.ann;
+      if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
+      _notifCounts.ann = results[3].data.length;
+      DB.announcements = results[3].data.map(function(a) {
+        return { id:a.id, title:a.title, body:a.body, icon:a.icon, company:a.company, author:a.author, date:a.date, poll:a.poll||[], votes:a.votes||{} };
+      });
     }
-  } catch(e) {}
-}
-// ============ NOTIFICATION SOUND ============
-var _prevMsgCount = 0;
-var _prevAnnCount = 0;
-var _prevDecreeCount = 0;
-function playNotifSound(type) {
-  try {
-    var ctx = new (window.AudioContext || window.webkitAudioContext)();
-    var osc = ctx.createOscillator();
-    var gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    if (type === 'message') {
-      // Double beep — friendly
-      osc.frequency.value = 880;
-      gain.gain.value = 0.08;
-      osc.start(ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-      osc.stop(ctx.currentTime + 0.15);
-      var osc2 = ctx.createOscillator();
-      var gain2 = ctx.createGain();
-      osc2.connect(gain2); gain2.connect(ctx.destination);
-      osc2.frequency.value = 1100;
-      gain2.gain.value = 0.08;
-      osc2.start(ctx.currentTime + 0.18);
-      gain2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-      osc2.stop(ctx.currentTime + 0.35);
-    } else {
-      // Single chime — announcement
-      osc.frequency.value = 660;
-      osc.type = 'sine';
-      gain.gain.value = 0.1;
-      osc.start(ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.1);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-      osc.stop(ctx.currentTime + 0.4);
+
+    // Decrees
+    if (results[4].data) {
+      var newDecs = results[4].data.length - _notifCounts.dec;
+      if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
+      _notifCounts.dec = results[4].data.length;
+      DB.decrees = results[4].data.map(function(d) {
+        return { id:d.id, code:d.code, title:d.title, body:d.body, date:d.date, author:d.author };
+      });
     }
-    setTimeout(function(){ctx.close()}, 500);
-  } catch(e) {}
-}
-function showNotifBanner(text) {
-  var el = document.createElement('div');
-  el.style.cssText = 'position:fixed;top:1rem;right:1rem;background:rgba(240,180,41,.95);color:#0f172a;padding:.6rem 1.2rem;border-radius:10px;font-size:.82rem;font-weight:600;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,.3);animation:fadeIn .3s ease';
-  el.textContent = text;
-  document.body.appendChild(el);
-  setTimeout(function(){el.style.opacity='0';el.style.transition='opacity .5s';setTimeout(function(){el.remove()},500)}, 4000);
-}
 
-function applyRemoteSync(d) {
-  if (!d || !d.citizens) return;
-  _lastSync = Date.now();
-  _remoteSync = true;
+    // Laws
+    if (results[5].data) {
+      DB.laws = results[5].data.map(function(l) {
+        return { id:l.id, title:l.title, desc:l.description, status:l.status, deadline:l.deadline, pour:l.pour, contre:l.contre, total:l.total, choices:l.choices };
+      });
+    }
 
-  var recentSave = (Date.now() - _lastSave < 20000);
+    // Defcon
+    if (results[6].data) {
+      var dc = results[6].data;
+      DB.defcon = dc.level || 5;
+      DB.defconLog = dc.log || [];
+      DB.defconProtos = dc.protos || {};
+    }
 
-  // ALWAYS accept these from remote (gov decisions, shared data):
-  if (d.citizens) {
-    // Merge citizens: accept job/role/name changes from remote
-    d.citizens.forEach(function(rc) {
-      var local = DB.citizens.find(function(c){return c.id===rc.id});
-      if (local) {
-        local.job = rc.job;
-        local.role = rc.role;
-        local.name = rc.name;
-        local.phone = rc.phone;
-      }
-    });
-    // Add new citizens that don't exist locally
-    d.citizens.forEach(function(rc) {
-      if (!DB.citizens.find(function(c){return c.id===rc.id})) DB.citizens.push(rc);
-    });
-    // NEVER auto-delete citizens — only manual gov deletion via deleteCitizen()
-  }
+    // Jobs
+    if (results[7].data) {
+      DB.jobs = results[7].data.map(function(j) {
+        return { id:j.id, company:j.company, icon:j.icon, role:j.role, salary:j.salary, slots:j.slots, desc:j.description, postedBy:j.posted_by };
+      });
+    }
 
-  // Enterprises: merge, don't replace (keep local ones that might not be in stale remote)
-  if (d.enterprises) {
-    d.enterprises.forEach(function(re) {
-      var local = DB.enterprises.find(function(e){return e.id===re.id || e.name===re.name});
-      if (local) { local.patron = re.patron; local.patronId = re.patronId; local.status = re.status; local.name = re.name; local.icon = re.icon; local.type = re.type; }
-      else { DB.enterprises.push(re); }
-    });
-  }
-
-  // ALWAYS accept gov accounts
-  if (d.govAccounts && d.govAccounts.length >= (DB.govAccounts||[]).length) DB.govAccounts = d.govAccounts;
-  // Laws, decrees, announcements, messages: take the longer list (more data = newer)
-  if (d.laws && d.laws.length >= (DB.laws||[]).length) DB.laws = d.laws;
-  if (d.decrees && d.decrees.length >= (DB.decrees||[]).length) DB.decrees = d.decrees;
-  if (d.announcements && d.announcements.length >= (DB.announcements||[]).length) DB.announcements = d.announcements;
-  if (d.messages && d.messages.length >= (DB.messages||[]).length) DB.messages = d.messages;
-  if (d.voted) { Object.keys(d.voted).forEach(function(k){ DB.voted[k] = d.voted[k]; }); }
-  if (d.legalCodes) DB.legalCodes = d.legalCodes;
-  if (d.jobs && d.jobs.length >= (DB.jobs||[]).length) DB.jobs = d.jobs;
-  if (d.defcon !== undefined) DB.defcon = d.defcon;
-  if (d.defconLog) DB.defconLog = d.defconLog;
-  if (d.defconProtos) DB.defconProtos = d.defconProtos;
-  if (d.vault) DB.vault = d.vault;
-  if (d.govBudget) DB.govBudget = d.govBudget;
-  if (d.govTaxDeclarations) DB.govTaxDeclarations = d.govTaxDeclarations;
-  if (d.taxConfig) DB.taxConfig = d.taxConfig;
-  if (d.healthRecords) DB.healthRecords = d.healthRecords;
-  if (d.citizenSalaries) DB.citizenSalaries = d.citizenSalaries;
-  if (d.tempPatients) DB.tempPatients = d.tempPatients;
-
-  // allJobs: SKIP if using per-enterprise KV storage (enterprises are synced via shared_kv)
-  // Only merge from shared_state if we're NOT using KV (backward compat)
-  if (d.allJobs && !_useKV) {
-    Object.keys(d.allJobs).forEach(function(entName) {
-      var remote = d.allJobs[entName];
-      var local = DB.allJobs[entName];
-      if (!local) {
-        // New enterprise from remote — take it fully
-        DB.allJobs[entName] = remote;
-      } else {
-        // ALWAYS accept from remote: employees, grades (gov/patron decisions)
-        local.employees = remote.employees;
-        local.grades = remote.grades;
-        local.company = remote.company;
-        local.icon = remote.icon;
-        local.pendingApps = remote.pendingApps;
-        local.info = remote.info || local.info;
-        // Work data: only accept from remote if we haven't saved recently
-        if (!recentSave) {
-          local.pos = remote.pos;
-          local.invoices = remote.invoices;
-          local.weeklyHistory = remote.weeklyHistory;
-          local.companyExpenses = remote.companyExpenses;
-          local.employeeExpenses = remote.employeeExpenses;
-          local.taxDeclarations = remote.taxDeclarations;
-          local.stock = remote.stock;
-          local.internalMessages = remote.internalMessages;
-          local.hrRecords = remote.hrRecords;
-          local.serviceLog = remote.serviceLog;
-          local.bankBalance = remote.bankBalance;
-          local.comptaHistory = remote.comptaHistory;
-          local.comptaWeeks = remote.comptaWeeks;
+    // Also refresh enterprise data for current job
+    if (DB.user) {
+      var myCit2 = DB.citizens.find(function(c){return c.id===DB.user.id});
+      if (myCit2 && myCit2.job) {
+        var edRes = await sb.from('enterprise_data').select('*').eq('enterprise_name', myCit2.job).single();
+        if (edRes.data) {
+          var d = edRes.data;
+          DB.allJobs[myCit2.job] = {
+            company: d.enterprise_name, icon: d.icon || '🏢',
+            grades: d.grades || [], employees: d.employees || [],
+            pos: d.pos || [], invoices: d.invoices || [],
+            weeklyHistory: d.weekly_history || [], pendingApps: d.pending_apps || [],
+            employeeExpenses: d.employee_expenses || [], companyExpenses: d.company_expenses || [],
+            taxDeclarations: d.tax_declarations || [], stock: d.stock || [],
+            internalMessages: d.internal_messages || [], hrRecords: d.hr_records || [],
+            serviceLog: d.service_log || [], info: d.info || {},
+          };
+          loadJob();
         }
       }
-    });
-    // NEVER auto-delete enterprise data — only manual gov deletion via delEnterprise()
-  }
+    }
 
-  try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
-  if (DB.user) { try { loadJob(); buildNav(); } catch(e) {} }
-  _remoteSync = false;
+    _lastSync = Date.now();
+    if (DB.user) { try { buildNav(); } catch(e) {} }
+  } catch(e) { console.error('Poll error:', e); }
 }
-// Helper to get page content without navigation side effects
-function getPageContent(p) {
-  if (p.startsWith('code_')) { var code = DB.legalCodes.find(function(x){return x.id===p.replace('code_','')}); return code ? pCodeView(code) : ''; }
-  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,winfo:pWInfo,wapps:pWApps};
-  return R[p] ? R[p]() : '';
-}
-function getGovPageContent(p) {
-  var R = {gdash:gDash,gcit:gCitizens,gent:gEnt,gjobs:gJobs,gtax:gTax,gbudget:gBudget,gdecree:gDecree,gcodes:gCodes,gdefcon:gDefcon,gvault:gVault,gvotes:gVotes};
-  return R[p] ? R[p]() : '';
+
+// Compatibility: saveDB() now triggers granular save
+function saveDB() {
+  markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','voted','decrees','gov_accounts','health_records','citizen_salaries','gov_budget','tax_config','gov_tax_declarations','vault','defcon_state','temp_patients');
 }
 
 // ============ DATA ============// ============ DATA ============
@@ -994,7 +1184,7 @@ function doRegister() {
   if (DB.citizens.find(c => c.name.toLowerCase() === name.toLowerCase())) { err('Ce nom est déjà pris. Utilisez la connexion si vous avez déjà un compte.'); return; }
   const citizen = { id: genCitizenId(), name, phone: phone || '555-0000', pass, registered: new Date().toLocaleDateString('fr-FR'), job: null, role: null };
   DB.citizens.push(citizen);
-  saveDB();
+  markDirty('citizens');
   loginAs(citizen);
   // Show prominent modal with their ID
   setTimeout(() => {
@@ -1012,7 +1202,6 @@ function doRegister() {
 
 function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
-  localStorage.setItem('sa_lastLogin', citizen.id);
   localStorage.setItem('sa_session', JSON.stringify({type:'citizen', id:citizen.id}));
   _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   loadJob();
@@ -1103,7 +1292,7 @@ function buildNav() {
 }
 
 function go(p) {
-  saveDB();
+  flushDirty();
   DB.currentPage = p;
   document.querySelectorAll('.nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('page');
@@ -1264,6 +1453,7 @@ function voteAnnouncement(annId, choice) {
   a.votes[DB.user.id] = choice;
   var opt = a.poll.find(function(p){return p.label===choice});
   if (opt) opt.count = (opt.count||0) + 1;
+  markDirty('announcements');
   toast('Vote enregistré');
   go('home');
 }
@@ -1293,6 +1483,7 @@ function publishAnnouncement() {
   });
   // Max 20 announcements
   if (DB.announcements.length > 20) DB.announcements.length = 20;
+  markDirty('announcements');
   closeModal(); toast('Annonce publiée'); go('wdash');
 }
 
@@ -1340,6 +1531,7 @@ function saveProfile() {
   var ini = name.split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
   document.getElementById('sAv').textContent = ini;
   document.getElementById('sName').textContent = name;
+  markDirty('citizens','enterprise_data','enterprises');
   closeModal();
   toast('Profil mis à jour');
   go('home');
@@ -1505,7 +1697,7 @@ function pMsgDetail(idx) {
     <div style="display:flex;gap:.4rem;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--border)">
       ${!isSent?`<button class="btn btn-sm btn-blue" onclick="DB._msgReplyTo=${idx};DB._msgView='reply';go('msg')">↩ Répondre</button>`:''}
       <button class="btn btn-sm btn-outline" onclick="toast('Archivé')">📁 Archiver</button>
-      <button class="btn btn-sm btn-red" onclick="DB.messages.splice(${idx},1);DB._msgOpen=null;toast('Supprimé');go('msg')">🗑️</button>
+      <button class="btn btn-sm btn-red" onclick="var _dm=DB.messages[${idx}];DB.messages.splice(${idx},1);if(_dm)dbDelete('messages','id',_dm.id);markDirty('messages');DB._msgOpen=null;toast('Supprimé');go('msg')">🗑️</button>
     </div></div>`;
   return h;
 }
@@ -1553,6 +1745,7 @@ function sendNewMsg() {
     date: new Date().toLocaleDateString('fr-FR'),
     read: false
   });
+  markDirty('messages');
   DB._msgView = null;
   toast('Message envoyé à ' + entIcon + ' ' + entName);
   go('msg');
@@ -1587,6 +1780,7 @@ function sendReply() {
     icon: '📤', subject: subj || 'RE: ' + orig.subject, body: body,
     date: new Date().toLocaleDateString('fr-FR'), read: false
   });
+  markDirty('messages');
   DB._msgView = null; DB._msgOpen = null;
   toast('Réponse envoyée à ' + orig.from);
   go('msg');
@@ -1611,7 +1805,7 @@ function pJobs() {
         </div>
         <div style="display:flex;flex-direction:column;gap:.3rem">
           <button class="btn btn-sm btn-blue" onclick="modalApply(${j.id})">📝 Postuler</button>
-          ${(isPatron && j.company === DB.job.company) ? `<button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);toast('Offre supprimée');go('jobs')" style="font-size:.7rem">🗑️</button>` : ''}
+          ${(isPatron && j.company === DB.job.company) ? `<button class="btn btn-sm btn-red" onclick="var _dj=DB.jobs[${i}];DB.jobs.splice(${i},1);if(_dj)dbDelete('jobs','id',_dj.id);markDirty('jobs');toast('Offre supprimée');go('jobs')" style="font-size:.7rem">🗑️</button>` : ''}
         </div>
       </div></div>`;
   });
@@ -1636,6 +1830,7 @@ function publishJob() {
     desc: document.getElementById('pjDesc').value || 'Rejoignez notre équipe !',
     postedBy: DB.user.name
   });
+  markDirty('jobs');
   closeModal(); toast('Offre publiée !'); go('jobs');
 }
 function modalApply(jobId) {
@@ -1655,6 +1850,7 @@ function submitApplication(company) {
       message: msg, date: new Date().toLocaleDateString('fr-FR')
     });
   }
+  markDirty('enterprise_data');
   closeModal(); toast('Candidature envoyée à ' + company + ' !'); go('jobs');
 }
 
@@ -1751,6 +1947,7 @@ function castVote(id, choice) {
     l.contre = l.total > 0 ? Math.round(l._contre / l.total * 100) : 0;
   }
   toast('Vote enregistré');
+  markDirty('laws','voted');
   go('vote');
 }
 
@@ -1900,6 +2097,7 @@ function doCheckout() {
 
   DB.cart = [];
   toast('Facture $'+(sub+tva).toLocaleString()+' émise — enregistrée');
+  markDirty('enterprise_data','citizen_salaries');
   go('wpos');
 }
 
@@ -2002,6 +2200,7 @@ function submitExpense() {
     type, amount, desc, date: new Date().toLocaleDateString('fr-FR'), status: 'pending'
   });
   toast('Note de frais soumise — $' + amount);
+  markDirty('enterprise_data');
   go('wfrais');
 }
 
@@ -2062,7 +2261,7 @@ function pWHR() {
       <td style="font-size:.82rem;max-width:250px">${r.reason}</td>
       <td class="mono" style="color:${r.amount?'var(--green)':'var(--t3)'}">${r.amount?'+$'+r.amount.toLocaleString():'—'}</td>
       <td style="font-size:.78rem;color:var(--t2)">${r.by}</td>
-      <td><button class="btn btn-sm btn-red" onclick="DB.job.hrRecords.splice(${realIdx},1);toast('Enregistrement supprimé');go('whr')" style="padding:.2rem .4rem">✕</button></td>
+      <td><button class="btn btn-sm btn-red" onclick="DB.job.hrRecords.splice(${realIdx},1);markDirty('enterprise_data');toast('Enregistrement supprimé');go('whr')" style="padding:.2rem .4rem">✕</button></td>
     </tr>`;
   });
   h += '</tbody></table></div>';
@@ -2101,6 +2300,7 @@ function submitHR(type) {
 
   closeModal();
   toast(isPrime ? 'Prime de $'+amount+' attribuée à '+emp.name : 'Sanction enregistrée pour '+emp.name);
+  markDirty('enterprise_data');
   go('whr');
 }
 
@@ -2227,7 +2427,7 @@ function pWCompta() {
     h += '<div class="card"><div class="card-t" style="justify-content:space-between">\u{1F4B8} Charges de l\'Entreprise <button class="btn btn-sm btn-blue" onclick="modalAddCompanyExpense()">+ Ajouter</button></div>';
     h += '<table><thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Montant</th><th>Récurrent</th><th></th></tr></thead><tbody>';
     j.companyExpenses.forEach(function(e,i) {
-      h += '<tr><td style="font-size:.8rem">' + e.date + '</td><td><span class="badge b-purple">' + e.type + '</span></td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">$' + e.amount.toLocaleString() + '</td><td>' + (e.recurring ? '<span class="badge b-blue">Mensuel</span>' : '<span class="badge b-orange">Ponctuel</span>') + '</td><td><button class="btn btn-sm btn-red" onclick="DB.job.companyExpenses.splice(' + i + ',1);toast(\'Charge supprimée\');go(\'wcompta\')" style="padding:.2rem .4rem">\u2715</button></td></tr>';
+      h += '<tr><td style="font-size:.8rem">' + e.date + '</td><td><span class="badge b-purple">' + e.type + '</span></td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">$' + e.amount.toLocaleString() + '</td><td>' + (e.recurring ? '<span class="badge b-blue">Mensuel</span>' : '<span class="badge b-orange">Ponctuel</span>') + '</td><td><button class="btn btn-sm btn-red" onclick="DB.job.companyExpenses.splice(' + i + ',1);markDirty(\'enterprise_data\');toast(\'Charge supprimée\');go(\'wcompta\')" style="padding:.2rem .4rem">\u2715</button></td></tr>';
     });
     h += '</tbody></table>';
     var recurr = j.companyExpenses.filter(function(e){return e.recurring}).reduce(function(s,e){return s+e.amount},0);
@@ -2245,8 +2445,8 @@ function pWCompta() {
       h += '<div><div style="font-weight:600;font-size:.88rem">' + e.empName + ' <span class="badge b-blue">' + e.type + '</span></div>';
       h += '<div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">' + e.desc + ' \u2014 ' + e.date + '</div></div>';
       h += '<div style="display:flex;align-items:center;gap:.5rem"><span class="mono" style="font-size:.95rem;color:var(--red)">$' + e.amount + '</span>';
-      h += '<button class="btn btn-sm btn-green" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'approved\';toast(\'Approuvé\');go(\'wcompta\')">\u2713</button>';
-      h += '<button class="btn btn-sm btn-red" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'rejected\';toast(\'Refusé\');go(\'wcompta\')">\u2715</button></div></div>';
+      h += '<button class="btn btn-sm btn-green" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'approved\';markDirty(\'enterprise_data\');toast(\'Approuvé\');go(\'wcompta\')">\u2713</button>';
+      h += '<button class="btn btn-sm btn-red" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'rejected\';markDirty(\'enterprise_data\');toast(\'Refusé\');go(\'wcompta\')">\u2715</button></div></div>';
     });
     h += '</div>';
     h += '<div class="card"><div class="card-t">\u{1F4CB} Historique Traité</div><table><thead><tr><th>Date</th><th>Employé</th><th>Type</th><th>Montant</th><th>Statut</th></tr></thead><tbody>';
@@ -2310,6 +2510,7 @@ function doBankOp(type) {
     DB.job.comptaHistory.unshift({id:Date.now(), date:new Date().toLocaleDateString('fr-FR'), desc:desc, amount:amt, type:'out'});
   }
   if (DB.job.comptaHistory.length > 100) DB.job.comptaHistory.length = 100;
+  markDirty('enterprise_data');
   closeModal(); toast((type==='depot'?'Dépôt':'Retrait') + ' de $' + amt.toLocaleString() + ' enregistré'); go('wcompta');
 }
 function modalSetBalance() {
@@ -2317,7 +2518,7 @@ function modalSetBalance() {
     '<p style="font-size:.82rem;color:var(--t2);margin-bottom:.8rem">Solde actuel: <strong style="color:var(--gold)">$' + DB.job.bankBalance.toLocaleString() + '</strong></p>' +
     '<div class="fg"><label>Nouveau solde ($)</label><input type="number" id="newBal" value="' + DB.job.bankBalance + '"></div>' +
     '<div class="fg"><label>Motif</label><input id="balReason" placeholder="Ex: Correction, inventaire de caisse..."></div>' +
-    '<div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var nb=parseInt(document.getElementById(\'newBal\').value)||0;var diff=nb-DB.job.bankBalance;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString(\'fr-FR\'),desc:\'Ajustement: \'+(document.getElementById(\'balReason\').value||\'—\'),amount:Math.abs(diff),type:diff>=0?\'in\':\'out\'});DB.job.bankBalance=nb;closeModal();toast(\'Solde ajusté à $\'+nb.toLocaleString());go(\'wcompta\')">Appliquer</button></div>');
+    '<div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var nb=parseInt(document.getElementById(\'newBal\').value)||0;var diff=nb-DB.job.bankBalance;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString(\'fr-FR\'),desc:\'Ajustement: \'+(document.getElementById(\'balReason\').value||\'—\'),amount:Math.abs(diff),type:diff>=0?\'in\':\'out\'});DB.job.bankBalance=nb;markDirty(\'enterprise_data\');closeModal();toast(\'Solde ajusté à $\'+nb.toLocaleString());go(\'wcompta\')">Appliquer</button></div>');
 }
 function checkWeeklyClose(j) {
   if (!j.comptaWeeks) j.comptaWeeks = [];
@@ -2442,6 +2643,7 @@ function confirmPaySalaries() {
   closeModal();
   if (count === 0) { toast('Salaires déjà versés'); return; }
   toast(count + ' salaires versés — Total: $' + totalPaid.toLocaleString());
+  markDirty('enterprise_data','citizen_salaries');
   go('wcompta');
 }
 
@@ -2894,7 +3096,7 @@ function modalEditArticle2(idx) {
 
 // ============ WORK: TEAM ============
 // ============ SERVICE LOG ============
-function toggleService() {
+function toggleService() { /* save after toggle */ 
   if (!DB.job) return;
   if (!DB.job.serviceLog) DB.job.serviceLog = [];
   const now = new Date();
@@ -3025,6 +3227,7 @@ function doHire() {
   // Update gov enterprise employee count
   const ent = DB.enterprises.find(e=>e.name===DB.job.company);
   if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
+  markDirty('enterprise_data','citizens','enterprises');
   closeModal(); toast(c.name + ' embauché !'); go('wteam');
 }
 function fireEmployee(empId, empName) {
@@ -3042,6 +3245,7 @@ function doFire(empId, empName) {
   // Update enterprise employee count in gov
   const ent = DB.enterprises.find(e=>e.name===DB.job.company);
   if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
+  markDirty('enterprise_data','citizens','enterprises');
   closeModal();
   toast(empName + ' a été révoqué');
   go('wteam');
@@ -3097,7 +3301,7 @@ function modalNewGrade() {
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ngArticles"> Gérer les articles (caisse)</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ngPatients"> Dossiers patients (EMS)</label>
     </div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ngName').value||'Nouveau';DB.job.grades.push({name:n,payType:document.getElementById('ngPayType').value,fixe:parseInt(document.getElementById('ngFixe').value)||0,commission:parseInt(document.getElementById('ngComm').value)||0,prime:parseInt(document.getElementById('ngPrime').value)||0,canManage:document.getElementById('ngManage').checked,canHire:document.getElementById('ngHire').checked,canFire:document.getElementById('ngFire').checked,canEditGrades:false,canStock:document.getElementById('ngStock').checked,canArticles:document.getElementById('ngArticles').checked,canPatients:document.getElementById('ngPatients').checked,canPOS:document.getElementById('ngPOS').checked});closeModal();toast('Grade «'+n+'» créé');go('wgrades')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ngName').value||'Nouveau';DB.job.grades.push({name:n,payType:document.getElementById('ngPayType').value,fixe:parseInt(document.getElementById('ngFixe').value)||0,commission:parseInt(document.getElementById('ngComm').value)||0,prime:parseInt(document.getElementById('ngPrime').value)||0,canManage:document.getElementById('ngManage').checked,canHire:document.getElementById('ngHire').checked,canFire:document.getElementById('ngFire').checked,canEditGrades:false,canStock:document.getElementById('ngStock').checked,canArticles:document.getElementById('ngArticles').checked,canPatients:document.getElementById('ngPatients').checked,canPOS:document.getElementById('ngPOS').checked});markDirty('enterprise_data');closeModal();toast('Grade «'+n+'» créé');go('wgrades')">Créer</button></div>`);
 }
 function modalEditGrade(idx) {
   const g = DB.job.grades[idx];
@@ -3116,7 +3320,7 @@ function modalEditGrade(idx) {
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egArticles" ${g.canArticles?'checked':''}> Gérer les articles</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egPatients" ${g.canPatients?'checked':''}> Dossiers patients (EMS)</label>
     </div>
-    <div class="modal-acts">${idx>0?`<button class="btn btn-sm btn-red" onclick="DB.job.grades.splice(${idx},1);DB.job.employees.forEach(e=>{if(e.grade>=${idx})e.grade=Math.max(0,e.grade-1)});closeModal();toast('Grade supprimé');go('wgrades')">Supprimer</button>`:''}<button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveGradeEdit(${idx})">Sauvegarder</button></div>`);
+    <div class="modal-acts">${idx>0?`<button class="btn btn-sm btn-red" onclick="markDirty('enterprise_data');DB.job.grades.splice(${idx},1);DB.job.employees.forEach(e=>{if(e.grade>=${idx})e.grade=Math.max(0,e.grade-1)});closeModal();toast('Grade supprimé');go('wgrades')">Supprimer</button>`:''}<button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveGradeEdit(${idx})">Sauvegarder</button></div>`);
 }
 function saveGradeEdit(idx) {
   var g = DB.job.grades[idx];
@@ -3135,6 +3339,7 @@ function saveGradeEdit(idx) {
   g.canPOS = document.getElementById('egPOS').checked;
   // Update current user's permissions if editing own grade
   if (idx === DB.job.gradeIndex) DB.job.role = g.name;
+  markDirty('enterprise_data');
   closeModal(); toast('Grade «' + g.name + '» mis à jour'); buildNav(); go('wgrades');
 }
 
@@ -3253,7 +3458,7 @@ function doGovLogin() {
   if (!DB.govAccounts || !DB.govAccounts.length) {
     if (!name) { err('Nom requis pour créer le premier compte.'); return; }
     DB.govAccounts = [{id: id, name: name, code: code}];
-    saveDB();
+    markDirty('gov_accounts');
     toast('Compte gouvernement créé : ' + id);
   }
   // Check against stored gov accounts
@@ -3293,7 +3498,7 @@ function doChangeGovPass() {
   account.code = newCode;
   closeModal();
   toast('Code d\'accès modifié avec succès');
-  saveDB();
+  markDirty('gov_accounts');
 }
 function modalGovAnnouncement() {
   modal(`<div class="modal-t">📣 Annonce Gouvernementale</div>
@@ -3340,7 +3545,7 @@ function buildGovNav() {
   });
 }
 function goGov(p) {
-  saveDB();
+  flushDirty();
   document.querySelectorAll('#gNav .nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('gPage');
   const T={gdash:'Panneau de Contrôle',gcit:'Registre des Citoyens',gent:'Gestion des Entreprises',gjobs:'Offres d\'Emploi',gtax:'Configuration Fiscale',gbudget:'Budget de l\'État',gdecree:'Décrets & Annonces',gcodes:'Gestion des Codes & Lois',gdefcon:'Sécurité — DEFCON',gvault:'Coffre-Fort Sécurisé',gvotes:'Lois & Votes Citoyens'};
@@ -3434,6 +3639,7 @@ function removeFromJob(citizenId) {
     const ent2 = DB.enterprises.find(function(e){return e.name===c.job});
     if (ent2 && DB.allJobs[c.job]) ent2.employees = DB.allJobs[c.job].employees.filter(function(e){return e.status==='active'}).length;
     c.job = null; c.role = null;
+    markDirty('citizens','enterprise_data','enterprises');
     toast(c.name + ' retiré de son emploi');
     goGov('gcit');
   });
@@ -3464,6 +3670,10 @@ function deleteCitizen(citizenId, citizenName) {
     // Remove citizen
     var idx = DB.citizens.findIndex(function(x){return x.id===citizenId});
     if (idx > -1) DB.citizens.splice(idx, 1);
+    dbDelete('citizens','id',citizenId);
+    dbDelete('health_records','citizen_id',citizenId);
+    dbDelete('citizen_salaries','citizen_id',citizenId);
+    markDirty('citizens','enterprise_data','enterprises','messages','health_records','citizen_salaries');
     toast(citizenName + ' supprimé définitivement');
     goGov('gcit');
   });
@@ -3489,6 +3699,7 @@ function doAssignPatron(citizenId, citizenName, citizenPhone) {
   const existing = jobData.employees.find(e=>e.id===citizenId);
   if (existing) { existing.grade = 0; existing.status = 'active'; }
   else { jobData.employees.push({id:citizenId, name:citizenName, grade:0, phone:citizenPhone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
+  markDirty('enterprises','enterprise_data','citizens');
   closeModal();
   toast(citizenName + ' nommé Patron de ' + ent.name);
   goGov('gcit');
@@ -3498,7 +3709,7 @@ function modalResetPass(citizenId) {
   modal(`<div class="modal-t">🔑 Réinitialiser le Mot de Passe</div>
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">Citoyen: <strong>${c.name}</strong> <span class="mono" style="color:var(--t3)">${c.id}</span></div>
     <div class="fg"><label>Nouveau mot de passe</label><input id="rpPass" type="text" placeholder="Nouveau MDP"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const p=document.getElementById('rpPass').value;if(!p||p.length<3){err('Min 3 caractères');return}DB.citizens.find(x=>x.id==='${c.id}').pass=p;closeModal();toast('MDP de ${c.name} réinitialisé')">Réinitialiser</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const p=document.getElementById('rpPass').value;if(!p||p.length<3){err('Min 3 caractères');return}DB.citizens.find(x=>x.id==='${c.id}').pass=p;markDirty('citizens');closeModal();toast('MDP de ${c.name} réinitialisé')">Réinitialiser</button></div>`);
 }
 
 // ============ GOV: ENTREPRISES ============
@@ -3518,7 +3729,7 @@ function gEnt() {
         <button class="btn btn-sm btn-outline" onclick="modalEditEnt(${i})" title="Modifier">✏️</button>
         <button class="btn btn-sm btn-outline" onclick="modalChangePatron(${i})" title="Changer le patron">👔</button>
         <button class="btn btn-sm btn-outline" style="border-color:rgba(59,130,246,.3);color:var(--blue)" onclick="modalGovPostJob(${i})" title="Publier une offre">📢</button>
-        ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
+        ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';markDirty('enterprises');toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';markDirty('enterprises');toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
         <button class="btn btn-sm btn-red" onclick="delEnterprise(${i})" title="Supprimer">🗑️</button>
       </div></td></tr>`;
   });
@@ -3545,6 +3756,7 @@ function createEnt() {
     cit.job = n; cit.role = 'Patron';
     DB.allJobs[n].employees.push({id:cit.id, name:cit.name, grade:0, phone:cit.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
   }
+  markDirty('enterprises','enterprise_data','citizens');
   closeModal(); toast(n + ' créée' + (cit?' — Patron: '+cit.name:'')); goGov('gent');
 }
 function modalEditEnt(idx) {
@@ -3573,13 +3785,13 @@ function saveEditEnt(idx) {
     DB.allJobs[newName].company = newName;
     DB.allJobs[newName].icon = newIco;
     delete DB.allJobs[oldName];
-    if (_useKV) deleteEntKV(oldName); // clean up old key in shared_kv
     // Update citizens who work there
     DB.citizens.forEach(function(c) { if (c.job === oldName) c.job = newName; });
     // Update job offers
     DB.jobs.forEach(function(j) { if (j.company === oldName) { j.company = newName; j.icon = newIco; } });
   }
   if (DB.allJobs[newName]) DB.allJobs[newName].icon = newIco;
+  markDirty('enterprises','enterprise_data','citizens','jobs');
   closeModal(); toast(newName + ' mis à jour'); goGov('gent');
 }
 function delEnterprise(idx) {
@@ -3592,9 +3804,11 @@ function delEnterprise(idx) {
         if (cit) { cit.job = null; cit.role = null; }
       });
       delete DB.allJobs[e.name];
-      if (_useKV) deleteEntKV(e.name); // clean up in shared_kv
     }
     DB.enterprises.splice(idx, 1);
+    markDirty('enterprises','enterprise_data','citizens');
+    dbDelete('enterprise_data','enterprise_name',e.name);
+    dbDelete('enterprises','id',e.id);
     toast('Entreprise supprimée');
     goGov('gent');
   });
@@ -3641,6 +3855,7 @@ function assignPatronFromSearch(idx, citizenId) {
   var existing = jobData.employees.find(function(e){return e.id===citizenId});
   if (existing) { existing.grade = 0; existing.status = 'active'; }
   else { jobData.employees.push({id:citizenId, name:newCit.name, grade:0, phone:newCit.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
+  markDirty('enterprises','enterprise_data','citizens');
   closeModal(); toast(newCit.name + ' nommé Patron de ' + ent.name); goGov('gent');
 }
 function removePatron(idx) {
@@ -3657,6 +3872,7 @@ function removePatron(idx) {
     if (oldCit.role === 'Patron') { oldCit.job = null; oldCit.role = null; }
   }
   ent.patron = ''; ent.patronId = '';
+  markDirty('enterprises','enterprise_data','citizens');
   closeModal(); toast('Patron retiré de ' + ent.name); goGov('gent');
 }
 function modalGovPostJob(entIdx) {
@@ -3731,7 +3947,7 @@ function gTax() {
   h += `<div class="card"><div class="card-t">📊 Barème Progressif de l'Impôt</div>
     <table><thead><tr><th>Tranche</th><th>Bénéfice Net</th><th>Taux</th><th>Action</th></tr></thead><tbody>`;
   tc.tranches.forEach((t,i) => {
-    h += `<tr><td><span class="badge b-gold">${i+1}</span></td><td class="mono">$${t.min.toLocaleString()} — $${t.max.toLocaleString()}</td><td><input type="number" value="${t.rate}" min="0" max="100" style="width:70px;padding:.3rem .5rem;font-size:.85rem" onchange="DB.taxConfig.tranches[${i}].rate=parseInt(this.value)||0;toast('Tranche ${i+1} → '+this.value+'%')"> %</td><td>${i>0?`<button class="btn btn-sm btn-red" onclick="DB.taxConfig.tranches.splice(${i},1);toast('Tranche supprimée');goGov('gtax')">✕</button>`:''}</td></tr>`;
+    h += `<tr><td><span class="badge b-gold">${i+1}</span></td><td class="mono">$${t.min.toLocaleString()} — $${t.max.toLocaleString()}</td><td><input type="number" value="${t.rate}" min="0" max="100" style="width:70px;padding:.3rem .5rem;font-size:.85rem" onchange="DB.taxConfig.tranches[${i}].rate=parseInt(this.value)||0;toast('Tranche ${i+1} → '+this.value+'%')"> %</td><td>${i>0?`<button class="btn btn-sm btn-red" onclick="DB.taxConfig.tranches.splice(${i},1);markDirty('tax_config');toast('Tranche supprimée');goGov('gtax')">✕</button>`:''}</td></tr>`;
   });
   h += `</tbody></table>
     <button class="btn btn-sm btn-outline" style="margin-top:.6rem" onclick="modalAddTranche()">+ Ajouter une tranche</button></div>`;
@@ -3759,7 +3975,7 @@ function modalAddTranche() {
   modal(`<div class="modal-t">➕ Nouvelle Tranche</div>
     <div class="row"><div class="fg"><label>À partir de ($)</label><input id="atMin" type="number" value="${last.max+1}"></div><div class="fg"><label>Jusqu'à ($)</label><input id="atMax" type="number" value="${last.max+100000}"></div></div>
     <div class="fg"><label>Taux (%)</label><input id="atRate" type="number" value="${last.rate+5}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.taxConfig.tranches.push({min:parseInt(document.getElementById('atMin').value),max:parseInt(document.getElementById('atMax').value),rate:parseInt(document.getElementById('atRate').value)});closeModal();toast('Tranche ajoutée');goGov('gtax')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.taxConfig.tranches.push({min:parseInt(document.getElementById('atMin').value),max:parseInt(document.getElementById('atMax').value),rate:parseInt(document.getElementById('atRate').value)});closeModal();markDirty('tax_config');toast('Tranche ajoutée');goGov('gtax')">Ajouter</button></div>`);
 }
 function simTax() {
   const ca=parseInt(document.getElementById('simCA').value)||0, dep=parseInt(document.getElementById('simDep').value)||0;
@@ -3854,7 +4070,7 @@ function modalAddInvestment() {
     <div class="fg"><label>Nom du projet</label><input id="invName" placeholder="Ex: Construction hôpital"></div>
     <div class="row"><div class="fg"><label>Budget total ($)</label><input type="number" id="invBudget" placeholder="0"></div><div class="fg"><label>Statut initial</label><select id="invStatus"><option value="planned">Planifié</option><option value="active">En cours</option></select></div></div>
     <div class="fg"><label>Description</label><textarea id="invDesc" placeholder="Détail du projet..."></textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('invName').value;if(!n){err('Nom requis');return}DB.govBudget.investments.push({id:Date.now(),name:n,budget:parseInt(document.getElementById('invBudget').value)||0,spent:0,status:document.getElementById('invStatus').value,desc:document.getElementById('invDesc').value||'—'});closeModal();toast('Projet créé');goGov('gbudget')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('invName').value;if(!n){err('Nom requis');return}DB.govBudget.investments.push({id:Date.now(),name:n,budget:parseInt(document.getElementById('invBudget').value)||0,spent:0,status:document.getElementById('invStatus').value,desc:document.getElementById('invDesc').value||'—'});closeModal();markDirty('gov_budget');toast('Projet créé');goGov('gbudget')">Créer</button></div>`);
 }
 
 function modalFundProject(idx) {
@@ -3864,7 +4080,7 @@ function modalFundProject(idx) {
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.85rem">Budget: <strong class="mono">$${inv.budget.toLocaleString()}</strong> — Dépensé: <strong class="mono" style="color:var(--blue)">$${inv.spent.toLocaleString()}</strong> — Restant: <strong class="mono" style="color:var(--green)">$${remaining.toLocaleString()}</strong></div>
     <div class="fg"><label>Montant à débloquer ($)</label><input type="number" id="fundAmt" value="${remaining}" max="${remaining}"></div>
     <div class="fg"><label style="display:flex;align-items:center;gap:.4rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="fundDone"> Marquer comme terminé</label></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const a=parseInt(document.getElementById('fundAmt').value)||0;const inv=DB.govBudget.investments[${idx}];inv.spent+=a;DB.govBudget.balance-=a;if(document.getElementById('fundDone').checked)inv.status='done';closeModal();toast('$'+a.toLocaleString()+' débloqués');goGov('gbudget')">Débloquer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const a=parseInt(document.getElementById('fundAmt').value)||0;const inv=DB.govBudget.investments[${idx}];inv.spent+=a;DB.govBudget.balance-=a;if(document.getElementById('fundDone').checked)inv.status='done';closeModal();markDirty('gov_budget');toast('$'+a.toLocaleString()+' débloqués');goGov('gbudget')">Débloquer</button></div>`);
 }
 
 // ============ GOV: DECRETS ============
@@ -3979,7 +4195,7 @@ function modalEditProtos(level) {
   const protos = DB.defconProtos[level] || [];
   modal(`<div class="modal-t">✏️ Protocoles — Niveau ${level}</div>
     <div class="fg"><label>Protocoles (un par ligne)</label><textarea id="protoEdit" rows="8" style="font-size:.85rem">${protos.join('\n')}</textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="DB.defconProtos[${level}]=document.getElementById('protoEdit').value.split('\\n').filter(function(l){return l.trim()});closeModal();toast('Protocoles niveau ${level} mis à jour');goGov('gdefcon')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="DB.defconProtos[${level}]=document.getElementById('protoEdit').value.split('\\n').filter(function(l){return l.trim()});markDirty('defcon_state');closeModal();toast('Protocoles niveau ${level} mis à jour');goGov('gdefcon')">Sauvegarder</button></div>`);
 }
 function changeDefcon(n) {
   if (n === DB.defcon) return;
@@ -3994,6 +4210,7 @@ function doChangeDefcon(n) {
   DB.defconLog.unshift({ date: new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), from: DB.defcon, to: n, reason: reason, author: DB.govUser.name });
   if (DB.defconLog.length > 10) DB.defconLog.length = 10; // Max 10
   DB.defcon = n;
+  markDirty('defcon_state');
   closeModal();
   toast('DEFCON passé au niveau ' + n);
   goGov('gdefcon');
@@ -4023,7 +4240,7 @@ function gVault() {
           <div style="font-size:.7rem;color:var(--t3);margin-top:.2rem">Créé le ${d.date} — ${pageCount} page${pageCount>1?'s':''}</div>
         </div>
         <span class="badge ${classColor}">${d.classification}</span>
-        <button class="btn btn-sm btn-red" onclick="event.stopPropagation();DB.vault.splice(${i},1);toast('Dossier supprimé');goGov('gvault')" style="padding:.25rem .4rem">🗑️</button>
+        <button class="btn btn-sm btn-red" onclick="event.stopPropagation();DB.vault.splice(${i},1);markDirty('vault');toast('Dossier supprimé');goGov('gvault')" style="padding:.25rem .4rem">🗑️</button>
       </div>
     </div>`;
   });
@@ -4074,7 +4291,7 @@ function gVaultDetail(idx) {
       <div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-blue" onclick="DB._vaultRead=${pi};goGov('gvault')" title="Lire">👁️</button>
         <button class="btn btn-sm btn-outline" onclick="modalEditPage(${idx},${pi})" title="Modifier">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="DB.vault[${idx}].pages.splice(${pi},1);toast('Page supprimée');goGov('gvault')" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="DB.vault[${idx}].pages.splice(${pi},1);markDirty('vault');toast('Page supprimée');goGov('gvault')" style="padding:.2rem .4rem">✕</button>
       </div>
     </div>`;
   });
@@ -4087,7 +4304,7 @@ function modalAddDossier() {
     <div class="fg"><label>Nom du dossier</label><input id="vdName" placeholder="Ex: Opération Tempête"></div>
     <div class="fg"><label>Description / Notes</label><textarea id="vdNotes" rows="3" placeholder="Description du contenu..."></textarea></div>
     <div class="fg"><label>Classification</label><select id="vdClass"><option>Restreint</option><option>Confidentiel</option><option>Secret Défense</option></select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('vdName').value||'Nouveau Dossier';DB.vault.push({name:n,notes:document.getElementById('vdNotes').value||'',classification:document.getElementById('vdClass').value,date:new Date().toLocaleDateString('fr-FR'),pages:[]});closeModal();toast(n+' créé');goGov('gvault')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('vdName').value||'Nouveau Dossier';DB.vault.push({name:n,notes:document.getElementById('vdNotes').value||'',classification:document.getElementById('vdClass').value,date:new Date().toLocaleDateString('fr-FR'),pages:[]});closeModal();markDirty('vault');toast(n+' créé');goGov('gvault')">Créer</button></div>`);
 }
 
 function modalEditDossier(idx) {
@@ -4096,7 +4313,7 @@ function modalEditDossier(idx) {
     <div class="fg"><label>Nom</label><input id="edName" value="${d.name}"></div>
     <div class="fg"><label>Description</label><textarea id="edNotes" rows="3">${d.notes||''}</textarea></div>
     <div class="fg"><label>Classification</label><select id="edClass"><option ${d.classification==='Restreint'?'selected':''}>Restreint</option><option ${d.classification==='Confidentiel'?'selected':''}>Confidentiel</option><option ${d.classification==='Secret Défense'?'selected':''}>Secret Défense</option></select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var dd=DB.vault[${idx}];dd.name=document.getElementById('edName').value;dd.notes=document.getElementById('edNotes').value;dd.classification=document.getElementById('edClass').value;closeModal();toast('Dossier mis à jour');goGov('gvault')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var dd=DB.vault[${idx}];dd.name=document.getElementById('edName').value;dd.notes=document.getElementById('edNotes').value;dd.classification=document.getElementById('edClass').value;closeModal();markDirty('vault');toast('Dossier mis à jour');goGov('gvault')">Sauvegarder</button></div>`);
 }
 
 function modalAddPage(dossierIdx) {
@@ -4104,7 +4321,7 @@ function modalAddPage(dossierIdx) {
     <div class="fg"><label>Titre</label><input id="vpTitle" placeholder="Ex: Rapport d'enquête #1"></div>
     <div class="fg"><label>Auteur</label><input id="vpAuthor" value="${DB.govUser?DB.govUser.name:''}"></div>
     <div class="fg"><label>Contenu</label><textarea id="vpContent" rows="10" placeholder="Rédigez le contenu du document..."></textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.vault[${dossierIdx}].pages.push({title:document.getElementById('vpTitle').value||'Page',author:document.getElementById('vpAuthor').value||'—',content:document.getElementById('vpContent').value||'',date:new Date().toLocaleDateString('fr-FR')});closeModal();toast('Page ajoutée');goGov('gvault')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.vault[${dossierIdx}].pages.push({title:document.getElementById('vpTitle').value||'Page',author:document.getElementById('vpAuthor').value||'—',content:document.getElementById('vpContent').value||'',date:new Date().toLocaleDateString('fr-FR')});closeModal();markDirty('vault');toast('Page ajoutée');goGov('gvault')">Ajouter</button></div>`);
 }
 
 function modalEditPage(dossierIdx, pageIdx) {
@@ -4112,7 +4329,7 @@ function modalEditPage(dossierIdx, pageIdx) {
   modal(`<div class="modal-t">✏️ Modifier — ${p.title}</div>
     <div class="fg"><label>Titre</label><input id="epTitle" value="${p.title}"></div>
     <div class="fg"><label>Contenu</label><textarea id="epContent" rows="10">${p.content}</textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var pp=DB.vault[${dossierIdx}].pages[${pageIdx}];pp.title=document.getElementById('epTitle').value;pp.content=document.getElementById('epContent').value;closeModal();toast('Page mise à jour');goGov('gvault')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var pp=DB.vault[${dossierIdx}].pages[${pageIdx}];pp.title=document.getElementById('epTitle').value;pp.content=document.getElementById('epContent').value;closeModal();markDirty('vault');toast('Page mise à jour');goGov('gvault')">Sauvegarder</button></div>`);
 }
 
 // ============ GOV: VOTES / LOIS ============
@@ -4145,7 +4362,7 @@ function gVotes() {
         <div style="flex:1"><strong style="font-size:.9rem">${isMulti?'🗳️':'📜'} ${l.title}</strong> <span class="badge ${l.status==='open'?'b-green':'b-red'}">${l.status==='open'?'Ouvert':'Terminé'}</span>
         <span style="font-size:.72rem;color:var(--t3);margin-left:.5rem">${totalVotes} votes</span></div>
         <div style="display:flex;gap:.3rem">
-          ${l.status==='open'?`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='closed';toast('Vote fermé');goGov('gvotes')">Fermer</button>`:`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='open';toast('Vote réouvert');goGov('gvotes')">Réouvrir</button>`}
+          ${l.status==='open'?`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='closed';markDirty('laws');toast('Vote fermé');goGov('gvotes')">Fermer</button>`:`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='open';markDirty('laws');toast('Vote réouvert');goGov('gvotes')">Réouvrir</button>`}
           <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);toast('Vote supprimé');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
         </div>
       </div>`;
@@ -4202,69 +4419,71 @@ function createVote() {
   document.getElementById('lvTitle').value = '';
   document.getElementById('lvDesc').value = '';
   document.getElementById('lvChoices').value = '';
+  markDirty('laws');
   toast('Vote soumis aux citoyens');
   goGov('gvotes');
 }
 
+
+
 // ============ INIT ============
 (async function() {
   var statusEl = document.getElementById('connStatus');
-  if (statusEl) statusEl.innerHTML = '⏳ Chargement...';
+  if (statusEl) statusEl.innerHTML = '⏳ Connexion à Supabase...';
 
-  // 1. Detect per-enterprise storage (shared_kv table)
-  try { _useKV = await Promise.race([detectKV(), new Promise(function(r){setTimeout(function(){r(false)},2000)})]); } catch(e) { _useKV = false; }
-  if (_useKV) console.log('✅ Stockage par entreprise actif (shared_kv)');
-
-  // 2. SUPABASE EST LA SOURCE DE VÉRITÉ — toujours essayer en premier
+  // 1. CHARGER DEPUIS LES TABLES SUPABASE INDIVIDUELLES
   var loaded = false;
-  try {
-    loaded = await Promise.race([
-      loadFromSupabase(),
-      new Promise(function(r) { setTimeout(function() { r(false); }, 4000); })
-    ]);
-  } catch(e) {}
-  if (loaded) console.log('☁️ Données chargées depuis Supabase');
-
-  // 3. Si Supabase échoue/timeout → fallback localStorage (cache hors-ligne)
-  var _offlineMode = false;
-  if (!loaded) {
-    loaded = loadFromLocal();
-    if (loaded) {
-      console.log('⚡ Fallback localStorage (Supabase indisponible)');
-      _offlineMode = true;
+  var retries = 0;
+  while (!loaded && retries < 3) {
+    try {
+      loaded = await Promise.race([
+        loadFromSupabase(),
+        new Promise(function(r) { setTimeout(function() { r(false); }, 8000); })
+      ]);
+    } catch(e) { console.error('Load attempt failed:', e); }
+    if (!loaded) {
+      retries++;
+      if (statusEl) statusEl.innerHTML = '⏳ Tentative ' + (retries+1) + '/3...';
+      await new Promise(function(r) { setTimeout(r, 1000); });
     }
   }
 
-  // 4. Si rien nulle part → première initialisation
+  if (loaded) {
+    console.log('☁️ Données chargées depuis Supabase (tables individuelles)');
+    updateSyncBadge('ok');
+  }
+
+  // 2. Si Supabase inaccessible → écran d'erreur
+  if (!loaded && !_supabaseOK) {
+    if (statusEl) statusEl.innerHTML = '🔴 Impossible de se connecter à Supabase';
+    document.getElementById('auth').innerHTML = '<div style="text-align:center;padding:3rem 1.5rem;max-width:400px;margin:0 auto"><div style="font-size:3rem;margin-bottom:1rem">🔴</div><h2 style="color:var(--red);margin-bottom:.5rem">Serveur indisponible</h2><p style="color:var(--t3);margin-bottom:1.5rem;font-size:.9rem">Impossible de se connecter à la base de données.<br>Vérifiez votre connexion internet et réessayez.</p><button onclick="location.reload()" style="background:var(--accent);color:#fff;border:none;padding:.7rem 2rem;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer">🔄 RÉESSAYER</button></div>';
+    return;
+  }
+
+  // 3. Si tables vides → première initialisation
   if (!loaded) {
     initAllJobs();
-    console.log('🆕 Données initialisées');
+    // Sauvegarder la structure initiale dans les tables
+    markDirty('gov_budget', 'tax_config', 'defcon_state');
+    await flushDirty();
+    console.log('🆕 Première initialisation (tables individuelles)');
   }
 
-  // 5. Sync entreprises depuis shared_kv
-  if (_useKV && loaded) {
-    try { await Promise.race([loadEntsKV(), new Promise(function(r){setTimeout(function(){r(false)},3000)})]); } catch(e) {}
-  }
+  // 4. S'assurer que allJobs est initialisé pour les entreprises existantes
+  DB.enterprises.forEach(function(ent) {
+    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon);
+  });
 
-  // 6. Sauvegarder le cache local (sans écraser Supabase si on vient de le lire)
-  try { localStorage.setItem('sa_data', JSON.stringify(getPayload())); } catch(e) {}
-  // Ne push vers Supabase QUE si c'est une première init (pas de données en remote)
-  if (!_supabaseOK) saveDB();
-
-  // 7. Start realtime sync
+  // 5. Démarrer le polling temps réel
   try { setupRealtime(); } catch(e) {}
 
-  // 7b. Show offline banner if localStorage fallback
-  if (_offlineMode) showOfflineBanner();
-
-  // 8. Auto-restore session (stay logged in until manual logout)
+  // 6. Auto-restore session (sa_session = identifiant seulement)
   var session = null;
   try { session = JSON.parse(localStorage.getItem('sa_session')); } catch(e) {}
   if (session) {
     if (session.type === 'citizen') {
       var cit = DB.citizens.find(function(c){return c.id===session.id});
       if (cit) {
-        // Auto-login citizen
         DB.user = {id:cit.id, name:cit.name, phone:cit.phone};
         _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         loadJob();
@@ -4279,7 +4498,6 @@ function createVote() {
     } else if (session.type === 'gov') {
       var govAcc = DB.govAccounts ? DB.govAccounts.find(function(a){return a.id===session.id}) : null;
       if (govAcc) {
-        // Auto-login gov
         DB.govUser = {id:govAcc.id, name:session.name||govAcc.name};
         _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         document.getElementById('auth').classList.add('hide');
@@ -4291,43 +4509,12 @@ function createVote() {
       }
     }
   }
-  // If not auto-logged, show login hint
-  if (!session || !DB.user && !DB.govUser) {
-    var lastId = localStorage.getItem('sa_lastLogin');
-    if (lastId) { var inp = document.getElementById('lId'); if (inp) inp.value = lastId; }
-  }
 
   // 7. Ready
-  if (statusEl) statusEl.innerHTML = (_supabaseOK ? '\u{1F7E2}' : '\u{1F7E1}') + ' ' + DB.citizens.length + ' citoyens \u2014 ' + DB.enterprises.length + ' entreprises';
-  console.log('\u{1F3DB}\u{FE0F} San Andreas pr\u00EAt \u2014 ' + DB.citizens.length + ' citoyens');
-
-  // 8. Background: verify Supabase connection and sync
-  setTimeout(async function() {
-    try {
-      // Test RPC connectivity
-      var testRes = await sb.rpc('get_shared_state');
-      if (!testRes.error) {
-        _supabaseOK = true;
-        updateSyncBadge('ok');
-        console.log('\u{1F7E2} Supabase connect\u00E9');
-        // If we have local data, push it to Supabase
-        if (DB.citizens.length > 0) { saveDB(); }
-        // If Supabase has data and we don't, pull it
-        if (testRes.data && testRes.data.citizens && testRes.data.citizens.length > DB.citizens.length) {
-          applyRemoteSync(testRes.data);
-        }
-        var s = document.getElementById('connStatus');
-        if (s) s.innerHTML = '\u{1F7E2} Connect\u00E9 \u2014 ' + DB.citizens.length + ' citoyens';
-      } else {
-        updateSyncBadge('err');
-        console.log('\u{1F534} Supabase erreur:', testRes.error.message);
-      }
-    } catch(e) {
-      updateSyncBadge('err');
-      console.log('\u{1F534} Supabase injoignable');
-    }
-  }, 2000);
+  if (statusEl) statusEl.innerHTML = '\u{1F7E2} ' + DB.citizens.length + ' citoyens \u2014 ' + DB.enterprises.length + ' entreprises \u2014 Tables individuelles';
+  console.log('\u{1F3DB}\u{FE0F} San Andreas prêt \u2014 ' + DB.citizens.length + ' citoyens (architecture par tables)');
 })();
+
 </script>
 </body>
 </html>
