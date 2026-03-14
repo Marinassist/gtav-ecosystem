@@ -459,14 +459,16 @@ function pWCompta() {
     j.companyExpenses.forEach(function(e) { allExp.push({date:e.date, desc:e.desc + ' (' + e.type + ')', amount:e.amount, id:e.id||0}); });
     j.employeeExpenses.filter(function(e){return e.status==='approved'}).forEach(function(e) { allExp.push({date:e.date, desc:'Frais ' + e.empName + ' — ' + e.desc, amount:e.amount, id:e.id||0}); });
     (j.comptaHistory||[]).filter(function(e){return e.type==='out'}).forEach(function(e) { allExp.push({date:e.date, desc:e.desc, amount:e.amount, id:e.id||0}); });
+    if (totalTVA > 0) { allExp.push({date:'—', desc:'TVA collectée (' + DB.taxConfig.tva + '%) — à reverser', amount:totalTVA, id:0, isTVA:true}); }
     allExp.sort(function(a,b){return (b.id||0)-(a.id||0)});
     var totalAllExp = allExp.reduce(function(s,e){return s+e.amount},0);
     allExp.slice(0,10).forEach(function(e) {
-      h += '<tr><td style="font-size:.78rem">' + e.date + '</td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">-$' + e.amount.toLocaleString() + '</td></tr>';
+      var color = e.isTVA ? 'var(--orange)' : 'var(--red)';
+      h += '<tr><td style="font-size:.78rem">' + e.date + '</td><td style="font-size:.82rem' + (e.isTVA ? ';color:var(--orange);font-weight:600' : '') + '">' + e.desc + '</td><td class="mono" style="color:' + color + '">-$' + e.amount.toLocaleString() + '</td></tr>';
     });
     if (!allExp.length) h += '<tr><td colspan="3" style="color:var(--t3);text-align:center">Aucune dépense</td></tr>';
     h += '</tbody></table>';
-    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--red)">Total: <strong>$' + totalAllExp.toLocaleString() + '</strong></div></div>';
+    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--red)">Total: <strong>$' + totalAllExp.toLocaleString() + '</strong>' + (totalTVA > 0 ? ' <span style="color:var(--orange)">(dont TVA: $' + totalTVA.toLocaleString() + ')</span>' : '') + '</div></div>';
     h += '</div>';
 
     // Bank movements
