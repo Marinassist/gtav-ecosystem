@@ -435,21 +435,25 @@ function applyRemoteSync(d) {
   if (d.citizenSalaries) DB.citizenSalaries = d.citizenSalaries;
   if (d.tempPatients) DB.tempPatients = d.tempPatients;
 
-  // allJobs : prendre Supabase SAUF mon entreprise (je suis en train de travailler dessus)
+  // allJobs : Supabase est la vérité → prendre TOUT
+  // Puisque tout est 100% Supabase, on fait confiance aux données remote
   if (d.allJobs) {
-    var myEnt = (DB.user && DB.user.job) ? DB.user.job : '';
     Object.keys(d.allJobs).forEach(function(entName) {
-      if (entName !== myEnt || !DB.allJobs[entName]) {
-        DB.allJobs[entName] = d.allJobs[entName];
-      }
-    });
-    // Ajouter les nouvelles entreprises locales qui ne sont pas encore sur Supabase
-    Object.keys(DB.allJobs).forEach(function(entName) {
-      if (!d.allJobs[entName]) { /* garder local — pas encore synchro */ }
+      DB.allJobs[entName] = d.allJobs[entName];
     });
   }
 
-  if (DB.user) { try { loadJob(); buildNav(); } catch(e) {} }
+  // Recharger le job et re-rendre la page pour que le patron voie les ventes en temps réel
+  if (DB.user) {
+    try { loadJob(); buildNav(); } catch(e) {}
+    try {
+      var pg = document.getElementById('page');
+      if (pg && DB.currentPage) {
+        var content = getPageContent(DB.currentPage);
+        if (content) pg.innerHTML = content;
+      }
+    } catch(e) {}
+  }
 }
 // Helper to get page content without navigation side effects
 function getPageContent(p) {
