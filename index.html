@@ -249,525 +249,76 @@ tr:hover td{background:rgba(240,180,41,.02)}
 </div>
 
 <script>
-
 // ============ SUPABASE CLIENT ============
 const SUPABASE_URL = 'https://xodqbotgcglsbepglthd.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvZHFib3RnY2dsc2JlcGdsdGhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTI1MjgsImV4cCI6MjA4ODcyODUyOH0.aLbZ_sOtSz5Ki8M4QrDg3Fz_aGYuMQf_BODRNL1SgbI';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ============ PERSISTENCE — TABLES INDIVIDUELLES ============
-// Plus de JSON global. Chaque table est indépendante.
-// localStorage = UNIQUEMENT la session (user_id, type)
-// Toutes les données vivent dans des tables Supabase séparées.
-
+// ============ PERSISTENCE — 100% SUPABASE ============
+// localStorage = UNIQUEMENT sa_session (identifiant/mdp)
+// Toutes les données vivent dans Supabase, point final.
 let _saving = false;
+let _saveQueued = false;
 let _saveFails = 0;
 let _supabaseOK = false;
-const _dirty = new Set(); // Tables modifiées en attente de sauvegarde
-let _saveTimer = null;
 
-function _who() {
-  return DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
-}
-
-// Marquer une table comme modifiée
-function markDirty() {
-  // Accepte un ou plusieurs noms de tables
-  for (var i = 0; i < arguments.length; i++) _dirty.add(arguments[i]);
-  _scheduleSave();
-}
-
-function _scheduleSave() {
-  if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(function() { flushDirty(); }, 600);
-}
-
-// ============ SAUVEGARDE PAR TABLE ============
-async function flushDirty() {
-  if (_dirty.size === 0 || _saving) return;
-  _saving = true;
-  var tables = Array.from(_dirty);
-  _dirty.clear();
-  var who = _who();
-  var ts = new Date().toISOString();
-  var hadError = false;
-
-  for (var i = 0; i < tables.length; i++) {
-    try {
-      await _saveTable(tables[i], who, ts);
-    } catch(e) {
-      console.error('Save error:', tables[i], e);
-      _dirty.add(tables[i]); // Re-mark for retry
-      hadError = true;
-    }
-  }
-  _saving = false;
-  if (hadError) { _saveFails++; updateSyncBadge('err'); }
-  else { _saveFails = 0; updateSyncBadge('ok'); }
-}
-
-async function _saveTable(name, who, ts) {
-  switch(name) {
-    case 'citizens': await _saveCitizens(who, ts); break;
-    case 'messages': await _saveMessages(who, ts); break;
-    case 'enterprises': await _saveEnterprises(who, ts); break;
-    case 'enterprise_data': await _saveAllEnterpriseData(who, ts); break;
-    case 'jobs': await _saveJobs(who, ts); break;
-    case 'announcements': await _saveAnnouncements(who, ts); break;
-    case 'laws': await _saveLaws(who, ts); break;
-    case 'voted': await _saveVoted(who, ts); break;
-    case 'decrees': await _saveDecrees(who, ts); break;
-    case 'gov_accounts': await _saveGovAccounts(who, ts); break;
-    case 'health_records': await _saveHealthRecords(who, ts); break;
-    case 'citizen_salaries': await _saveCitizenSalaries(who, ts); break;
-    case 'gov_budget': await _saveGovBudget(who, ts); break;
-    case 'tax_config': await _saveTaxConfig(who, ts); break;
-    case 'gov_tax_declarations': await _saveGovTaxDeclarations(who, ts); break;
-    case 'vault': await _saveVault(who, ts); break;
-    case 'defcon_state': await _saveDefcon(who, ts); break;
-    case 'temp_patients': await _saveTempPatients(who, ts); break;
-    case 'legal_codes': await _saveLegalCodes(who, ts); break;
-  }
-}
-
-// --- Individual table save functions ---
-async function _saveCitizens(who, ts) {
-  var rows = DB.citizens.map(function(c) {
-    return { id:c.id, name:c.name, phone:c.phone, pass:c.pass, registered:c.registered, job:c.job, role:c.role, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('citizens').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveMessages(who, ts) {
-  var rows = DB.messages.map(function(m) {
-    return { id:m.id, from_name:m.from, from_id:m.fromId, to_name:m.to, to_id:m.toId, to_enterprise:m.toEnterprise, icon:m.icon, subject:m.subject, body:m.body, date:m.date, read:!!m.read, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('messages').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveEnterprises(who, ts) {
-  var rows = DB.enterprises.map(function(e) {
-    return { id:e.id, name:e.name, icon:e.icon, type:e.type, patron:e.patron, patron_id:e.patronId, status:e.status, created:e.created, employees:e.employees||0, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('enterprises').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveAllEnterpriseData(who, ts) {
-  var names = Object.keys(DB.allJobs);
-  for (var i = 0; i < names.length; i++) {
-    await _saveOneEnterpriseData(names[i], who, ts);
-  }
-}
-
-async function _saveOneEnterpriseData(entName, who, ts) {
-  if (!who) { who = _who(); ts = new Date().toISOString(); }
-  var d = DB.allJobs[entName];
-  if (!d) return;
-  var row = {
-    enterprise_name: entName, icon: d.icon || '🏢',
-    grades: d.grades, employees: d.employees, pos: d.pos,
-    invoices: d.invoices, weekly_history: d.weeklyHistory,
-    pending_apps: d.pendingApps, employee_expenses: d.employeeExpenses,
-    company_expenses: d.companyExpenses, tax_declarations: d.taxDeclarations,
-    stock: d.stock, internal_messages: d.internalMessages,
-    hr_records: d.hrRecords, service_log: d.serviceLog,
-    info: d.info || {},
-    bank_balance: d.bankBalance || 0,
-    compta_history: d.comptaHistory || [],
-    compta_weeks: d.comptaWeeks || [],
-    updated_at: ts, updated_by: who
+function getPayload() {
+  return {
+    citizens: DB.citizens, allJobs: DB.allJobs, enterprises: DB.enterprises,
+    laws: DB.laws, decrees: DB.decrees, defcon: DB.defcon, defconLog: DB.defconLog,
+    legalCodes: DB.legalCodes, healthRecords: DB.healthRecords,
+    citizenSalaries: DB.citizenSalaries, tempPatients: DB.tempPatients,
+    taxConfig: DB.taxConfig, govBudget: DB.govBudget,
+    govTaxDeclarations: DB.govTaxDeclarations, vault: DB.vault, defconProtos: DB.defconProtos,
+    govAccounts: DB.govAccounts, announcements: DB.announcements, messages: DB.messages, jobs: DB.jobs, voted: DB.voted,
   };
-  var res = await sb.from('enterprise_data').upsert(row, { onConflict:'enterprise_name' });
-  if (res.error) throw res.error;
-}
-
-async function _saveJobs(who, ts) {
-  var rows = DB.jobs.map(function(j) {
-    return { id:j.id, company:j.company, icon:j.icon, role:j.role, salary:j.salary, slots:j.slots, description:j.desc, posted_by:j.postedBy, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('jobs').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveAnnouncements(who, ts) {
-  var rows = DB.announcements.map(function(a) {
-    return { id:a.id, title:a.title, body:a.body, icon:a.icon, company:a.company, author:a.author, date:a.date, poll:a.poll||[], votes:a.votes||{}, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('announcements').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveLaws(who, ts) {
-  var rows = DB.laws.map(function(l) {
-    return { id:l.id, title:l.title, description:l.desc, status:l.status, deadline:l.deadline, pour:l.pour, contre:l.contre, total:l.total, choices:l.choices||null, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('laws').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveVoted(who, ts) {
-  var cid = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : '');
-  if (!cid) return;
-  var rows = [];
-  Object.keys(DB.voted).forEach(function(lawId) {
-    var v = DB.voted[lawId];
-    if (v) rows.push({ citizen_id:cid, law_id:parseInt(lawId), choice:String(v) });
-  });
-  if (rows.length) {
-    var res = await sb.from('voted').upsert(rows, { onConflict:'citizen_id,law_id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveDecrees(who, ts) {
-  var rows = DB.decrees.map(function(d) {
-    return { id:d.id||Date.now(), code:d.code, title:d.title, body:d.body, date:d.date, author:d.author, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('decrees').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveGovAccounts(who, ts) {
-  var rows = DB.govAccounts.map(function(a) {
-    return { id:a.id, name:a.name, pass:a.code||a.pass, created:a.created, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('gov_accounts').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveHealthRecords(who, ts) {
-  var rows = [];
-  Object.keys(DB.healthRecords).forEach(function(cid) {
-    rows.push({ citizen_id:cid, data:DB.healthRecords[cid], updated_at:ts, updated_by:who });
-  });
-  if (rows.length) {
-    var res = await sb.from('health_records').upsert(rows, { onConflict:'citizen_id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveCitizenSalaries(who, ts) {
-  var rows = [];
-  Object.keys(DB.citizenSalaries).forEach(function(cid) {
-    rows.push({ citizen_id:cid, data:DB.citizenSalaries[cid], updated_at:ts, updated_by:who });
-  });
-  if (rows.length) {
-    var res = await sb.from('citizen_salaries').upsert(rows, { onConflict:'citizen_id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveGovBudget(who, ts) {
-  var res = await sb.from('gov_budget').upsert({
-    id:1, balance:DB.govBudget.balance, income:DB.govBudget.income,
-    expenses:DB.govBudget.expenses, investments:DB.govBudget.investments,
-    updated_at:ts, updated_by:who
-  }, { onConflict:'id' });
-  if (res.error) throw res.error;
-}
-
-async function _saveTaxConfig(who, ts) {
-  var res = await sb.from('tax_config').upsert({
-    id:1, tva:DB.taxConfig.tva, tranches:DB.taxConfig.tranches,
-    updated_at:ts, updated_by:who
-  }, { onConflict:'id' });
-  if (res.error) throw res.error;
-}
-
-async function _saveGovTaxDeclarations(who, ts) {
-  var rows = DB.govTaxDeclarations.map(function(d) {
-    return { id:d.id||Date.now(), enterprise:d.enterprise, data:d, date:d.date, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('gov_tax_declarations').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveVault(who, ts) {
-  var rows = DB.vault.map(function(v) {
-    return { id:v.id, name:v.name, classification:v.classification, author:v.author, date:v.date, pages:v.pages||[], updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('vault').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveDefcon(who, ts) {
-  var res = await sb.from('defcon_state').upsert({
-    id:1, level:DB.defcon, log:DB.defconLog, protos:DB.defconProtos||{},
-    updated_at:ts, updated_by:who
-  }, { onConflict:'id' });
-  if (res.error) throw res.error;
-}
-
-async function _saveTempPatients(who, ts) {
-  var rows = DB.tempPatients.map(function(p, i) {
-    return { id:p.id||i, data:p, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('temp_patients').upsert(rows, { onConflict:'id' });
-    if (res.error) throw res.error;
-  }
-}
-
-async function _saveLegalCodes(who, ts) {
-  var rows = DB.legalCodes.map(function(lc) {
-    return { code_id:lc.id, name:lc.name, icon:lc.icon, color:lc.color, articles:lc.articles, updated_at:ts, updated_by:who };
-  });
-  if (rows.length) {
-    var res = await sb.from('legal_codes').upsert(rows, { onConflict:'code_id' });
-    if (res.error) throw res.error;
-  }
-}
-
-// ============ SUPPRESSION EXPLICITE ============
-async function dbDelete(table, col, val) {
-  try {
-    await sb.from(table).delete().eq(col, val);
-  } catch(e) { console.error('Delete error:', table, col, val, e); }
-}
-async function dbDeleteIn(table, col, vals) {
-  try {
-    if (vals.length) await sb.from(table).delete().in(col, vals);
-  } catch(e) { console.error('Delete error:', table, e); }
-}
-
-// ============ CHARGEMENT DEPUIS TABLES INDIVIDUELLES ============
-async function loadFromSupabase() {
-  try {
-    var results = await Promise.all([
-      sb.from('citizens').select('*'),
-      sb.from('messages').select('*').order('id', {ascending:false}),
-      sb.from('enterprises').select('*'),
-      sb.from('enterprise_data').select('*'),
-      sb.from('jobs').select('*'),
-      sb.from('announcements').select('*').order('id', {ascending:false}),
-      sb.from('laws').select('*').order('id', {ascending:false}),
-      sb.from('voted').select('*'),
-      sb.from('decrees').select('*').order('id', {ascending:false}),
-      sb.from('gov_accounts').select('*'),
-      sb.from('health_records').select('*'),
-      sb.from('citizen_salaries').select('*'),
-      sb.from('gov_budget').select('*').eq('id', 1).single(),
-      sb.from('tax_config').select('*').eq('id', 1).single(),
-      sb.from('gov_tax_declarations').select('*'),
-      sb.from('vault').select('*'),
-      sb.from('defcon_state').select('*').eq('id', 1).single(),
-      sb.from('temp_patients').select('*'),
-      sb.from('legal_codes').select('*'),
-    ]);
-
-    var hasData = false;
-
-    // Citizens
-    if (results[0].data && results[0].data.length) {
-      DB.citizens = results[0].data.map(function(c) {
-        return { id:c.id, name:c.name, phone:c.phone, pass:c.pass, registered:c.registered, job:c.job, role:c.role };
-      });
-      hasData = true;
-    }
-
-    // Messages
-    if (results[1].data && results[1].data.length) {
-      DB.messages = results[1].data.map(function(m) {
-        return { id:m.id, from:m.from_name, fromId:m.from_id, to:m.to_name, toId:m.to_id, toEnterprise:m.to_enterprise, icon:m.icon, subject:m.subject, body:m.body, date:m.date, read:m.read };
-      });
-    }
-
-    // Enterprises
-    if (results[2].data && results[2].data.length) {
-      DB.enterprises = results[2].data.map(function(e) {
-        return { id:e.id, name:e.name, icon:e.icon, type:e.type, patron:e.patron, patronId:e.patron_id, status:e.status, created:e.created, employees:e.employees||0 };
-      });
-    }
-
-    // Enterprise data (allJobs)
-    if (results[3].data && results[3].data.length) {
-      DB.allJobs = {};
-      results[3].data.forEach(function(d) {
-        DB.allJobs[d.enterprise_name] = {
-          company: d.enterprise_name, icon: d.icon || '🏢',
-          grades: d.grades || [], employees: d.employees || [],
-          pos: d.pos || [], invoices: d.invoices || [],
-          weeklyHistory: d.weekly_history || [],
-          pendingApps: d.pending_apps || [],
-          employeeExpenses: d.employee_expenses || [],
-          companyExpenses: d.company_expenses || [],
-          taxDeclarations: d.tax_declarations || [],
-          stock: d.stock || [],
-          internalMessages: d.internal_messages || [],
-          hrRecords: d.hr_records || [],
-          serviceLog: d.service_log || [],
-          info: d.info || {},
-          bankBalance: parseFloat(d.bank_balance) || 0,
-          comptaHistory: d.compta_history || [],
-          comptaWeeks: d.compta_weeks || [],
-        };
-      });
-    }
-
-    // Jobs
-    if (results[4].data) {
-      DB.jobs = results[4].data.map(function(j) {
-        return { id:j.id, company:j.company, icon:j.icon, role:j.role, salary:j.salary, slots:j.slots, desc:j.description, postedBy:j.posted_by };
-      });
-    }
-
-    // Announcements
-    if (results[5].data) {
-      DB.announcements = results[5].data.map(function(a) {
-        return { id:a.id, title:a.title, body:a.body, icon:a.icon, company:a.company, author:a.author, date:a.date, poll:a.poll||[], votes:a.votes||{} };
-      });
-    }
-
-    // Laws
-    if (results[6].data) {
-      DB.laws = results[6].data.map(function(l) {
-        return { id:l.id, title:l.title, desc:l.description, status:l.status, deadline:l.deadline, pour:l.pour, contre:l.contre, total:l.total, choices:l.choices };
-      });
-    }
-
-    // Voted (charger uniquement les votes du citoyen connecté)
-    if (results[7].data) {
-      DB.voted = {};
-      var sessionCid = null;
-      try { var sess = JSON.parse(localStorage.getItem('sa_session')); if (sess) sessionCid = sess.id; } catch(e) {}
-      results[7].data.forEach(function(v) {
-        if (!sessionCid || v.citizen_id === sessionCid) DB.voted[v.law_id] = v.choice;
-      });
-    }
-
-    // Decrees
-    if (results[8].data) {
-      DB.decrees = results[8].data.map(function(d) {
-        return { id:d.id, code:d.code, title:d.title, body:d.body, date:d.date, author:d.author };
-      });
-    }
-
-    // Gov accounts
-    if (results[9].data) {
-      DB.govAccounts = results[9].data.map(function(a) {
-        return { id:a.id, name:a.name, code:a.pass, created:a.created };
-      });
-    }
-
-    // Health records
-    if (results[10].data) {
-      DB.healthRecords = {};
-      results[10].data.forEach(function(h) { DB.healthRecords[h.citizen_id] = h.data; });
-    }
-
-    // Citizen salaries
-    if (results[11].data) {
-      DB.citizenSalaries = {};
-      results[11].data.forEach(function(s) { DB.citizenSalaries[s.citizen_id] = s.data; });
-    }
-
-    // Gov budget
-    if (results[12].data) {
-      var b = results[12].data;
-      DB.govBudget = { balance:b.balance||0, income:b.income||[], expenses:b.expenses||[], investments:b.investments||[] };
-    }
-
-    // Tax config
-    if (results[13].data) {
-      var t = results[13].data;
-      DB.taxConfig = { tva:t.tva||5, tranches:t.tranches||DB.taxConfig.tranches };
-    }
-
-    // Gov tax declarations
-    if (results[14].data) {
-      DB.govTaxDeclarations = results[14].data.map(function(d) { return d.data || d; });
-    }
-
-    // Vault
-    if (results[15].data) {
-      DB.vault = results[15].data.map(function(v) {
-        return { id:v.id, name:v.name, classification:v.classification, author:v.author, date:v.date, pages:v.pages||[] };
-      });
-    }
-
-    // Defcon
-    if (results[16].data) {
-      var dc = results[16].data;
-      DB.defcon = dc.level || 5;
-      DB.defconLog = dc.log || [];
-      DB.defconProtos = dc.protos || {};
-    }
-
-    // Temp patients
-    if (results[17].data) {
-      DB.tempPatients = results[17].data.map(function(p) { return p.data || p; });
-    }
-
-    // Legal codes (si modifiés par le gouvernement)
-    if (results[18].data && results[18].data.length) {
-      DB.legalCodes = results[18].data.map(function(lc) {
-        return { id:lc.code_id, name:lc.name, icon:lc.icon, color:lc.color, articles:lc.articles||[] };
-      });
-    }
-
-    _supabaseOK = true;
-    return hasData || results.some(function(r) { return r.data && (Array.isArray(r.data) ? r.data.length > 0 : true); });
-
-  } catch(e) {
-    console.error('Load error:', e);
-    return false;
-  }
-}
-
-// ============ VERSIONING : Vérifier avant mise à jour ============
-async function checkVersion(table, idCol, idVal, oldUpdatedAt) {
-  try {
-    var res = await sb.from(table).select('updated_at').eq(idCol, idVal).single();
-    if (res.data && res.data.updated_at && oldUpdatedAt) {
-      if (res.data.updated_at !== oldUpdatedAt) {
-        toast('⚠️ Données modifiées par quelqu\'un d\'autre. Rafraîchissement...', 'warn');
-        await pollForChanges();
-        return false;
-      }
-    }
-  } catch(e) {}
-  return true;
 }
 
 // Nettoyer l'ancien cache localStorage (migration one-shot)
 try { localStorage.removeItem('sa_data'); localStorage.removeItem('sa_lastLogin'); } catch(e) {}
 
+// ============ SAUVEGARDE : DIRECTE VERS SUPABASE ============
+function saveDB() {
+  var payload = getPayload();
+  payload._ts = Date.now();
+  if (_saving) { _saveQueued = true; return; }
+  _saving = true;
+  var who = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : 'anon');
+  sb.rpc('set_shared_state', { new_data: payload, who: who })
+    .then(function(res) {
+      _saving = false;
+      if (!res.error) { _saveFails = 0; _supabaseOK = true; updateSyncBadge('ok'); }
+      else { _saveFails++; updateSyncBadge('err'); }
+      if (_saveQueued) { _saveQueued = false; setTimeout(saveDB, 300); }
+    })
+    .catch(function() {
+      _saving = false; _saveFails++;
+      updateSyncBadge('err');
+      // Retry automatique
+      setTimeout(function() { _saveQueued = false; saveDB(); }, 3000);
+    });
+}
+
+// ============ CHARGEMENT : UNIQUEMENT DEPUIS SUPABASE ============
+async function loadFromSupabase() {
+  try {
+    var res = await sb.rpc('get_shared_state');
+    if (!res.error && res.data && typeof res.data === 'object' && res.data.citizens) {
+      var d = res.data;
+      Object.keys(d).forEach(function(k) { if (d[k] !== undefined) DB[k] = d[k]; });
+      _supabaseOK = true;
+      return true;
+    }
+    if (!res.error) _supabaseOK = true;
+    return false;
+  } catch(e) {
+    return false;
+  }
+}
+
 function resetAllData() {
   localStorage.removeItem('sa_session');
-  // Truncate all tables
-  Promise.all([
-    sb.from('citizens').delete().neq('id','__none__'),
-    sb.from('messages').delete().neq('id',0),
-    sb.from('enterprises').delete().neq('id','__none__'),
-    sb.from('enterprise_data').delete().neq('enterprise_name','__none__'),
-    sb.from('jobs').delete().neq('id',0),
-    sb.from('announcements').delete().neq('id',0),
-    sb.from('laws').delete().neq('id',0),
-    sb.from('decrees').delete().neq('id',0),
-  ]).then(function() { location.reload(); }).catch(function() { location.reload(); });
+  sb.rpc('set_shared_state', { new_data: {} }).then(function() { location.reload(); }).catch(function() { location.reload(); });
 }
 
 function updateSyncBadge(state) {
@@ -776,7 +327,7 @@ function updateSyncBadge(state) {
     el = document.createElement('div');
     el.id = 'syncBadge';
     el.style.cssText = 'position:fixed;bottom:.5rem;left:.5rem;font-size:.65rem;padding:.3rem .6rem;border-radius:6px;z-index:9999;cursor:pointer;transition:all .3s';
-    el.onclick = function() { _saveFails=0; markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','decrees','gov_budget','tax_config','defcon_state','vault','legal_codes'); toast('Synchronisation forcée...'); };
+    el.onclick = function() { _saveFails=0; saveDB(); toast('Synchronisation forcée...'); };
     el.title = 'Cliquez pour forcer la synchronisation';
     document.body.appendChild(el);
   }
@@ -794,141 +345,121 @@ function updateSyncBadge(state) {
   }
 }
 
-// ============ POLLING : LIRE TABLES INDIVIDUELLES ============
-// Notification helpers (sound + banner)
-function playNotifSound(type) { try { var ctx=new (window.AudioContext||window.webkitAudioContext)(); var o=ctx.createOscillator(); var g=ctx.createGain(); o.connect(g); g.connect(ctx.destination); o.frequency.value=type==='message'?880:660; g.gain.value=0.08; o.start(); o.stop(ctx.currentTime+0.12); } catch(e){} }
-function showNotifBanner(msg) { var b=document.createElement('div'); b.style.cssText='position:fixed;top:.7rem;right:.7rem;background:var(--bg3);border:1px solid var(--gold);color:var(--t1);padding:.55rem 1rem;border-radius:8px;font-size:.82rem;z-index:9999;animation:toastIn .3s ease,toastOut .3s ease 4s forwards;display:flex;align-items:center;gap:.4rem;max-width:350px'; b.innerHTML=msg; document.body.appendChild(b); setTimeout(function(){b.remove()},4500); }
+// ============ POLLING : LIRE SUPABASE → METTRE À JOUR DB EN MÉMOIRE ============
 var _lastSync = 0;
 var _notifCounts = {msg:0, ann:0, dec:0};
 
 function setupRealtime() {
-  _notifCounts = {msg: countMyUnread(), ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
-  // Polling toutes les 10s — lit les tables individuelles
+  _notifCounts = {msg: DB.messages ? DB.messages.length : 0, ann: DB.announcements ? DB.announcements.length : 0, dec: DB.decrees ? DB.decrees.length : 0};
+  // Polling toutes les 10s — lit Supabase et met à jour DB
   setInterval(function() { pollForChanges(); }, 10000);
+  // Supabase Realtime en bonus
+  try {
+    sb.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'shared_state' }, function(payload) {
+      if (DB.user && payload.new.updated_by === DB.user.id) return;
+      if (DB.govUser && payload.new.updated_by === DB.govUser.id) return;
+      if (Date.now() - _lastSync < 5000) return;
+      applyRemoteSync(payload.new.data);
+    }).subscribe();
+  } catch(e) {}
 }
 
 async function pollForChanges() {
-  if (_saving) return;
   try {
-    // Load key tables that other users might modify
-    var results = await Promise.all([
-      sb.from('citizens').select('*'),
-      sb.from('messages').select('*').order('id', {ascending:false}),
-      sb.from('enterprises').select('*'),
-      sb.from('announcements').select('*').order('id', {ascending:false}),
-      sb.from('decrees').select('*').order('id', {ascending:false}),
-      sb.from('laws').select('*').order('id', {ascending:false}),
-      sb.from('defcon_state').select('*').eq('id', 1).single(),
-      sb.from('jobs').select('*'),
-    ]);
-
+    var res = await sb.rpc('get_shared_state');
+    if (res.error || !res.data) return;
+    var d = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+    if (!d || !d.citizens) return;
     _supabaseOK = true;
+
+    // Notifications
     var myId = DB.user ? DB.user.id : (DB.govUser ? DB.govUser.id : null);
-
-    // Update citizens (preserve local changes if saving)
-    if (results[0].data) {
-      DB.citizens = results[0].data.map(function(c) {
-        return { id:c.id, name:c.name, phone:c.phone, pass:c.pass, registered:c.registered, job:c.job, role:c.role };
+    var myEnt = '';
+    if (myId && d.citizens) {
+      var myCit = d.citizens.find(function(c){return c.id===myId});
+      if (myCit) myEnt = myCit.job || '';
+    }
+    var remoteMyMsgs = 0;
+    if (d.messages && myId) {
+      d.messages.forEach(function(m) {
+        if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteMyMsgs++;
       });
     }
-
-    // Notifications for messages
-    if (results[1].data) {
-      var remoteMsgs = results[1].data.map(function(m) {
-        return { id:m.id, from:m.from_name, fromId:m.from_id, to:m.to_name, toId:m.to_id, toEnterprise:m.to_enterprise, icon:m.icon, subject:m.subject, body:m.body, date:m.date, read:m.read };
-      });
-      var myEnt = '';
-      if (myId) { var myCit = DB.citizens.find(function(c){return c.id===myId}); if (myCit) myEnt = myCit.job || ''; }
-      // Compter uniquement les messages NON LUS qui me sont adressés
-      var remoteUnread = 0;
-      remoteMsgs.forEach(function(m) { if (!m.read && m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) remoteUnread++; });
-      var localUnread = _notifCounts.msg;
-      var newMsgsForMe = remoteUnread - localUnread;
-      if (newMsgsForMe > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgsForMe + ' nouveau' + (newMsgsForMe>1?'x':'') + ' message' + (newMsgsForMe>1?'s':'')); }
-      _notifCounts.msg = remoteUnread;
-      DB.messages = remoteMsgs;
-    }
-
-    // Enterprises
-    if (results[2].data) {
-      DB.enterprises = results[2].data.map(function(e) {
-        return { id:e.id, name:e.name, icon:e.icon, type:e.type, patron:e.patron, patronId:e.patron_id, status:e.status, created:e.created, employees:e.employees||0 };
+    var localMyMsgs = 0;
+    if (DB.messages && myId) {
+      DB.messages.forEach(function(m) {
+        if (m.fromId !== myId && (m.toId === myId || (myEnt && m.toEnterprise === myEnt))) localMyMsgs++;
       });
     }
+    var newMsgsForMe = remoteMyMsgs - localMyMsgs;
+    var newAnns = (d.announcements ? d.announcements.length : 0) - _notifCounts.ann;
+    var newDecs = (d.decrees ? d.decrees.length : 0) - _notifCounts.dec;
 
-    // Announcements
-    if (results[3].data) {
-      var newAnns = results[3].data.length - _notifCounts.ann;
-      if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
-      _notifCounts.ann = results[3].data.length;
-      DB.announcements = results[3].data.map(function(a) {
-        return { id:a.id, title:a.title, body:a.body, icon:a.icon, company:a.company, author:a.author, date:a.date, poll:a.poll||[], votes:a.votes||{} };
-      });
-    }
+    if (newMsgsForMe > 0) { playNotifSound('message'); showNotifBanner('\u{2709}\u{FE0F} ' + newMsgsForMe + ' nouveau' + (newMsgsForMe>1?'x':'') + ' message' + (newMsgsForMe>1?'s':'')); }
+    else if (newAnns > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4E3} Nouvelle annonce'); }
+    else if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
 
-    // Decrees
-    if (results[4].data) {
-      var newDecs = results[4].data.length - _notifCounts.dec;
-      if (newDecs > 0) { playNotifSound('announce'); showNotifBanner('\u{1F4DC} Nouveau décret'); }
-      _notifCounts.dec = results[4].data.length;
-      DB.decrees = results[4].data.map(function(d) {
-        return { id:d.id, code:d.code, title:d.title, body:d.body, date:d.date, author:d.author };
-      });
-    }
+    _notifCounts.ann = d.announcements ? d.announcements.length : 0;
+    _notifCounts.dec = d.decrees ? d.decrees.length : 0;
 
-    // Laws
-    if (results[5].data) {
-      DB.laws = results[5].data.map(function(l) {
-        return { id:l.id, title:l.title, desc:l.description, status:l.status, deadline:l.deadline, pour:l.pour, contre:l.contre, total:l.total, choices:l.choices };
-      });
-    }
-
-    // Defcon
-    if (results[6].data) {
-      var dc = results[6].data;
-      DB.defcon = dc.level || 5;
-      DB.defconLog = dc.log || [];
-      DB.defconProtos = dc.protos || {};
-    }
-
-    // Jobs
-    if (results[7].data) {
-      DB.jobs = results[7].data.map(function(j) {
-        return { id:j.id, company:j.company, icon:j.icon, role:j.role, salary:j.salary, slots:j.slots, desc:j.description, postedBy:j.posted_by };
-      });
-    }
-
-    // Also refresh enterprise data for current job
-    if (DB.user) {
-      var myCit2 = DB.citizens.find(function(c){return c.id===DB.user.id});
-      if (myCit2 && myCit2.job) {
-        var edRes = await sb.from('enterprise_data').select('*').eq('enterprise_name', myCit2.job).single();
-        if (edRes.data) {
-          var d = edRes.data;
-          DB.allJobs[myCit2.job] = {
-            company: d.enterprise_name, icon: d.icon || '🏢',
-            grades: d.grades || [], employees: d.employees || [],
-            pos: d.pos || [], invoices: d.invoices || [],
-            weeklyHistory: d.weekly_history || [], pendingApps: d.pending_apps || [],
-            employeeExpenses: d.employee_expenses || [], companyExpenses: d.company_expenses || [],
-            taxDeclarations: d.tax_declarations || [], stock: d.stock || [],
-            internalMessages: d.internal_messages || [], hrRecords: d.hr_records || [],
-            serviceLog: d.service_log || [], info: d.info || {},
-            bankBalance: parseFloat(d.bank_balance) || 0, comptaHistory: d.compta_history || [], comptaWeeks: d.compta_weeks || [],
-          };
-          loadJob();
-        }
-      }
-    }
-
-    _lastSync = Date.now();
-    if (DB.user) { try { buildNav(); } catch(e) {} }
-  } catch(e) { console.error('Poll error:', e); }
+    applyRemoteSync(d);
+  } catch(e) {}
 }
 
-// Compatibility: saveDB() now triggers granular save
-function saveDB() {
-  markDirty('citizens','messages','enterprises','enterprise_data','jobs','announcements','laws','voted','decrees','gov_accounts','health_records','citizen_salaries','gov_budget','tax_config','gov_tax_declarations','vault','defcon_state','temp_patients','legal_codes');
+// ============ APPLIQUER LES DONNÉES DE SUPABASE ============
+// Supabase est la vérité. On remplace DB sauf si on est en train de sauvegarder.
+function applyRemoteSync(d) {
+  if (!d || !d.citizens) return;
+  if (_saving) return; // Ne pas écraser pendant qu'on sauvegarde
+  _lastSync = Date.now();
+
+  // Remplacer toutes les données partagées par ce qui vient de Supabase
+  if (d.citizens) DB.citizens = d.citizens;
+  if (d.enterprises) DB.enterprises = d.enterprises;
+  if (d.messages) DB.messages = d.messages;
+  if (d.announcements) DB.announcements = d.announcements;
+  if (d.decrees) DB.decrees = d.decrees;
+  if (d.jobs) DB.jobs = d.jobs;
+  if (d.legalCodes) DB.legalCodes = d.legalCodes;
+  if (d.laws) DB.laws = d.laws;
+  if (d.voted) DB.voted = d.voted;
+  if (d.defcon !== undefined) DB.defcon = d.defcon;
+  if (d.defconLog) DB.defconLog = d.defconLog;
+  if (d.defconProtos) DB.defconProtos = d.defconProtos;
+  if (d.vault) DB.vault = d.vault;
+  if (d.govBudget) DB.govBudget = d.govBudget;
+  if (d.govTaxDeclarations) DB.govTaxDeclarations = d.govTaxDeclarations;
+  if (d.taxConfig) DB.taxConfig = d.taxConfig;
+  if (d.govAccounts) DB.govAccounts = d.govAccounts;
+  if (d.healthRecords) DB.healthRecords = d.healthRecords;
+  if (d.citizenSalaries) DB.citizenSalaries = d.citizenSalaries;
+  if (d.tempPatients) DB.tempPatients = d.tempPatients;
+
+  // allJobs : prendre Supabase SAUF mon entreprise (je suis en train de travailler dessus)
+  if (d.allJobs) {
+    var myEnt = (DB.user && DB.user.job) ? DB.user.job : '';
+    Object.keys(d.allJobs).forEach(function(entName) {
+      if (entName !== myEnt || !DB.allJobs[entName]) {
+        DB.allJobs[entName] = d.allJobs[entName];
+      }
+    });
+    // Ajouter les nouvelles entreprises locales qui ne sont pas encore sur Supabase
+    Object.keys(DB.allJobs).forEach(function(entName) {
+      if (!d.allJobs[entName]) { /* garder local — pas encore synchro */ }
+    });
+  }
+
+  if (DB.user) { try { loadJob(); buildNav(); } catch(e) {} }
+}
+// Helper to get page content without navigation side effects
+function getPageContent(p) {
+  if (p.startsWith('code_')) { var code = DB.legalCodes.find(function(x){return x.id===p.replace('code_','')}); return code ? pCodeView(code) : ''; }
+  var R = {home:pHome,salaires:pSalaires,health:pHealth,msg:pMsg,jobs:pJobs,vote:pVote,wdash:pWDash,wpos:pWPos,wpay:pWPay,wfrais:pWFrais,wchat:pWChat,wstock:pWStock,wpatients:pWPatients,warticles:pWArticles,wteam:pWTeam,wservice:pWService,whr:pWHR,wcompta:pWCompta,wgrades:pWGrades,winfo:pWInfo,wapps:pWApps};
+  return R[p] ? R[p]() : '';
+}
+function getGovPageContent(p) {
+  var R = {gdash:gDash,gcit:gCitizens,gent:gEnt,gjobs:gJobs,gtax:gTax,gbudget:gBudget,gdecree:gDecree,gcodes:gCodes,gdefcon:gDefcon,gvault:gVault,gvotes:gVotes};
+  return R[p] ? R[p]() : '';
 }
 
 // ============ DATA ============// ============ DATA ============
@@ -1107,7 +638,7 @@ function initAllJobs() {
   DB.allJobs = {};
   // Ensure all registered enterprises have job data
   DB.enterprises.forEach(function(ent) {
-    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon, ent.type);
+    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon);
   });
 }
 
@@ -1119,7 +650,7 @@ function loadJob() {
   // Auto-create allJobs entry if enterprise exists but has no job data
   if (!DB.allJobs[citizen.job]) {
     const ent = DB.enterprises.find(e => e.name === citizen.job);
-    if (ent) createEnterpriseData(citizen.job, ent.icon, ent.type);
+    if (ent) createEnterpriseData(citizen.job, ent.icon);
     else { DB.job = null; return; }
   }
   const jobData = DB.allJobs[citizen.job];
@@ -1141,26 +672,10 @@ function loadJob() {
 }
 
 // Create new enterprise data structure (called by gov createEnt)
-function createEnterpriseData(name, icon, type) {
-  var isSAMS = (type === 'SAMS' || name === 'SAMS');
-  var isLSPD = (type === 'LSPD' || name === 'LSPD');
-  var isGov = (type === 'Gouvernement' || name === 'Gouvernement');
-  var isMedia = (type === 'Média' || name.indexOf('Weazel') >= 0 || name.indexOf('News') >= 0);
+function createEnterpriseData(name, icon) {
   DB.allJobs[name] = {
     company: name, icon: icon || '🏢',
-    grades: isSAMS ? [
-      {name:'Directeur SAMS',payType:'fixe',fixe:3000,commission:0,prime:500,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:true},
-      {name:'Médecin',payType:'fixe',fixe:2000,commission:0,prime:200,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:true},
-      {name:'Ambulancier',payType:'fixe',fixe:1200,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:true},
-    ] : isLSPD ? [
-      {name:'Chef LSPD',payType:'fixe',fixe:3500,commission:0,prime:500,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
-      {name:'Lieutenant',payType:'fixe',fixe:2500,commission:0,prime:300,canManage:true,canHire:true,canFire:false,canEditGrades:false,canStock:true,canArticles:false,canPOS:true,canPatients:false},
-      {name:'Officier',payType:'fixe',fixe:1800,commission:0,prime:100,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
-      {name:'Cadet',payType:'fixe',fixe:1200,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:false,canPatients:false},
-    ] : isGov ? [
-      {name:'Gouverneur',payType:'fixe',fixe:5000,commission:0,prime:0,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
-      {name:'Secrétaire',payType:'fixe',fixe:2000,commission:0,prime:0,canManage:true,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
-    ] : [
+    grades: [
       {name:'Patron',payType:'both',fixe:2000,commission:15,prime:300,canManage:true,canHire:true,canFire:true,canEditGrades:true,canStock:true,canArticles:true,canPOS:true,canPatients:false},
       {name:'Employé',payType:'fixe',fixe:1000,commission:0,prime:0,canManage:false,canHire:false,canFire:false,canEditGrades:false,canStock:false,canArticles:false,canPOS:true,canPatients:false},
     ],
@@ -1223,7 +738,7 @@ function doRegister() {
   if (DB.citizens.find(c => c.name.toLowerCase() === name.toLowerCase())) { err('Ce nom est déjà pris. Utilisez la connexion si vous avez déjà un compte.'); return; }
   const citizen = { id: genCitizenId(), name, phone: phone || '555-0000', pass, registered: new Date().toLocaleDateString('fr-FR'), job: null, role: null };
   DB.citizens.push(citizen);
-  markDirty('citizens');
+  saveDB();
   loginAs(citizen);
   // Show prominent modal with their ID
   setTimeout(() => {
@@ -1242,7 +757,7 @@ function doRegister() {
 function loginAs(citizen) {
   DB.user = { id: citizen.id, name: citizen.name, phone: citizen.phone };
   localStorage.setItem('sa_session', JSON.stringify({type:'citizen', id:citizen.id}));
-  _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+  _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   loadJob();
   document.getElementById('auth').classList.add('hide');
   document.getElementById('app').classList.add('on');
@@ -1331,7 +846,7 @@ function buildNav() {
 }
 
 function go(p) {
-  flushDirty();
+  saveDB();
   DB.currentPage = p;
   document.querySelectorAll('.nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('page');
@@ -1492,7 +1007,6 @@ function voteAnnouncement(annId, choice) {
   a.votes[DB.user.id] = choice;
   var opt = a.poll.find(function(p){return p.label===choice});
   if (opt) opt.count = (opt.count||0) + 1;
-  markDirty('announcements');
   toast('Vote enregistré');
   go('home');
 }
@@ -1522,7 +1036,6 @@ function publishAnnouncement() {
   });
   // Max 20 announcements
   if (DB.announcements.length > 20) DB.announcements.length = 20;
-  markDirty('announcements');
   closeModal(); toast('Annonce publiée'); go('wdash');
 }
 
@@ -1570,7 +1083,6 @@ function saveProfile() {
   var ini = name.split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
   document.getElementById('sAv').textContent = ini;
   document.getElementById('sName').textContent = name;
-  markDirty('citizens','enterprise_data','enterprises');
   closeModal();
   toast('Profil mis à jour');
   go('home');
@@ -1654,82 +1166,37 @@ function pCodeView(code) {
 }
 
 // ============ HEALTH ============
-function _sevBadge(sev){if(!sev)return '';var cls=sev==="Critique"?"b-red":sev==="Grave"?"b-orange":"b-green";return ' <span class="badge '+cls+'">'+sev+'</span>';}
-function _stColor(st){return st==='Critique'?'var(--red)':st==='Hospitalisé'||st==='En soins'?'var(--orange)':st==='Décédé'?'var(--t3)':'var(--green)';}
-function _stBadge(st){var cls=st==='Critique'?'b-red':st==='Hospitalisé'||st==='En soins'?'b-orange':st==='Décédé'?'b-red':'b-green';return '<span class="badge '+cls+'">'+st+'</span>';}
-
 function pHealth() {
   const hp = DB.healthRecords[DB.user.id];
   if (!hp) {
-    return '<div style="margin-bottom:1rem"><h1 style="font-family:Rajdhani,sans-serif;font-size:1.5rem;font-weight:700">🏥 Carnet de Santé</h1></div><div class="card" style="text-align:center;padding:2rem"><div style="font-size:2.5rem;margin-bottom:.5rem">📋</div><div style="font-size:.95rem;color:var(--t2)">Aucun dossier médical pour le moment</div><div style="font-size:.82rem;color:var(--t3);margin-top:.3rem">Votre dossier sera créé lors de votre première visite au SAMS.</div></div>';
+    return `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏥 Carnet de Santé</h1></div>
+      <div class="card" style="text-align:center;padding:2rem"><div style="font-size:2.5rem;margin-bottom:.5rem">📋</div>
+      <div style="font-size:.95rem;color:var(--t2)">Aucun dossier médical pour le moment</div>
+      <div style="font-size:.82rem;color:var(--t3);margin-top:.3rem">Votre dossier sera créé lors de votre première visite aux EMS.</div></div>`;
   }
-  var st = hp.status || 'Stable';
-  var h = '<div style="margin-bottom:1.2rem"><h1 style="font-family:Rajdhani,sans-serif;font-size:1.5rem;font-weight:700">🏥 Carnet de Santé</h1><p style="color:var(--t2);font-size:.82rem">' + DB.user.name + ' — ' + DB.user.id + '</p></div>';
-
-  // Status
-  h += '<div class="card" style="border-color:' + _stColor(st) + ';display:flex;align-items:center;gap:.8rem;padding:.8rem 1rem"><div style="width:12px;height:12px;border-radius:50%;background:' + _stColor(st) + ';flex-shrink:0"></div><div><div style="font-size:.68rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px">Statut médical</div><div style="font-weight:700;color:' + _stColor(st) + ';font-size:1rem">' + st + '</div></div></div>';
-
-  // Profile
-  h += '<div class="card"><div class="card-t">👤 Profil Médical</div><div class="health-profile">';
-  h += '<div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">' + (hp.blood||'?') + '</strong></div>';
-  h += '<div class="health-row"><span>Sexe</span><strong>' + (hp.sex||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Date de naissance</span><strong>' + (hp.dob||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Taille</span><strong>' + (hp.height||'?') + '</strong></div>';
-  h += '<div class="health-row"><span>Poids</span><strong>' + (hp.weight||'?') + '</strong></div>';
-  h += '<div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">' + (hp.allergies||'Aucune') + '</strong></div>';
-  h += '<div class="health-row"><span>Pathologies</span><strong style="font-size:.8rem">' + (hp.conditions||'Aucune') + '</strong></div>';
-  h += '<div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">' + (hp.emergency||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>N° Sécu</span><strong class="mono" style="font-size:.8rem">' + (hp.ssn||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Assurance</span><strong style="font-size:.8rem">' + (hp.insurance||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Adresse</span><strong style="font-size:.8rem">' + (hp.address||'Non renseigné') + '</strong></div>';
-  h += '</div></div>';
-
-  // Vitals
-  if (hp.vitals && hp.vitals.length) {
-    var v = hp.vitals[0];
-    h += '<div class="card"><div class="card-t">💓 Dernières Constantes <span style="font-size:.7rem;color:var(--t3);font-weight:400;margin-left:auto">' + (v.date||'') + '</span></div>';
-    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.5rem">';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Tension</div><div style="font-family:Rajdhani,sans-serif;font-size:1.2rem;font-weight:700;color:var(--red)">' + (v.bp||'—') + '</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Pouls</div><div style="font-family:Rajdhani,sans-serif;font-size:1.2rem;font-weight:700;color:var(--orange)">' + (v.hr||'—') + ' bpm</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Température</div><div style="font-family:Rajdhani,sans-serif;font-size:1.2rem;font-weight:700;color:var(--gold)">' + (v.temp||'—') + '°C</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.6rem .7rem;text-align:center"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">SpO2</div><div style="font-family:Rajdhani,sans-serif;font-size:1.2rem;font-weight:700;color:var(--cyan)">' + (v.spo2||'—') + '%</div></div>';
-    h += '</div></div>';
-  }
-
-  // Treatments
-  if (hp.treatments && hp.treatments.length) {
-    h += '<div class="card"><div class="card-t">💊 Traitements en Cours</div>';
-    hp.treatments.forEach(function(t) {
-      h += '<div style="display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;border-left:3px solid var(--blue)"><div style="flex:1"><strong style="font-size:.88rem">' + t.name + '</strong><div style="font-size:.75rem;color:var(--t2)">' + (t.dosage||'') + ' — ' + (t.frequency||'') + '</div></div><div style="font-size:.72rem;color:var(--t3);text-align:right">' + (t.start||'') + ' → ' + (t.end||'en cours') + '<br>Dr. ' + (t.doctor||'—') + '</div></div>';
-    });
-    h += '</div>';
-  }
-
-  // Antecedents
-  if (hp.antecedents && hp.antecedents.length) {
-    h += '<div class="card"><div class="card-t">📂 Antécédents Médicaux</div>';
-    hp.antecedents.forEach(function(a) {
-      h += '<div style="padding:.4rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;font-size:.84rem"><strong>' + a.title + '</strong> <span style="color:var(--t3);font-size:.75rem">' + (a.date||'') + '</span><div style="font-size:.78rem;color:var(--t2)">' + (a.notes||'') + '</div></div>';
-    });
-    h += '</div>';
-  }
-
-  // History
-  h += '<div class="card"><div class="card-t">📋 Historique des Soins</div><div style="margin-top:.3rem">';
-  if (!hp.history || !hp.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin enregistré.</p>';
-  else hp.history.forEach(function(e) {
-    h += '<div class="timeline-item"><div class="timeline-date">' + e.date + ' — <span class="badge ' + e.badge + '">' + e.type + '</span>' + _sevBadge(e.severity) + '</div>';
-    h += '<div class="timeline-text"><strong>' + e.title + '</strong></div>';
-    h += '<div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ' + e.doctor + (e.location ? ' — 📍 ' + e.location : '') + '</div>';
-    h += '<div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">' + e.notes + '</div>';
-    if (e.prescription) h += '<div style="font-size:.78rem;color:var(--cyan);margin-top:.15rem">💊 ' + e.prescription + '</div>';
-    if (e.followup) h += '<div style="font-size:.78rem;color:var(--gold);margin-top:.15rem">📅 Suivi: ' + e.followup + '</div>';
-    h += '</div>';
+  let h = `<div style="margin-bottom:1.2rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏥 Carnet de Santé</h1><p style="color:var(--t2);font-size:.82rem">${DB.user.name} — ${DB.user.id}</p></div>`;
+  h += `<div class="card"><div class="card-t">👤 Profil Médical</div>
+    <div class="health-profile">
+      <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${hp.blood}</strong></div>
+      <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${hp.allergies}</strong></div>
+      <div class="health-row"><span>Taille</span><strong>${hp.height}</strong></div>
+      <div class="health-row"><span>Poids</span><strong>${hp.weight}</strong></div>
+      <div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">${hp.emergency}</strong></div>
+      <div class="health-row"><span>Pathologies</span><strong style="color:var(--green);font-size:.8rem">${hp.conditions}</strong></div>
+    </div></div>`;
+  h += `<div class="card"><div class="card-t">📋 Historique des Soins</div><div style="margin-top:.3rem">`;
+  if (!hp.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin enregistré.</p>';
+  hp.history.forEach(e => {
+    h += `<div class="timeline-item">
+      <div class="timeline-date">${e.date} — <span class="badge ${e.badge}">${e.type}</span></div>
+      <div class="timeline-text"><strong>${e.title}</strong></div>
+      <div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ${e.doctor}</div>
+      <div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">${e.notes}</div>
+    </div>`;
   });
   h += '</div></div>';
   return h;
 }
-
 
 // ============ MESSAGES ============
 function pMsg() {
@@ -1767,7 +1234,7 @@ function pMsg() {
 }
 
 function pMsgDetail(idx) {
-  const m = DB.messages[idx]; m.read = true; markDirty('messages'); buildNav();
+  const m = DB.messages[idx]; m.read = true; buildNav();
   const isSent = m.fromId === DB.user.id;
   let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._msgOpen=null;go('msg')">← Retour</button></div>`;
   h += `<div class="card">
@@ -1781,7 +1248,7 @@ function pMsgDetail(idx) {
     <div style="display:flex;gap:.4rem;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--border)">
       ${!isSent?`<button class="btn btn-sm btn-blue" onclick="DB._msgReplyTo=${idx};DB._msgView='reply';go('msg')">↩ Répondre</button>`:''}
       <button class="btn btn-sm btn-outline" onclick="toast('Archivé')">📁 Archiver</button>
-      <button class="btn btn-sm btn-red" onclick="var _dm=DB.messages[${idx}];DB.messages.splice(${idx},1);if(_dm)dbDelete('messages','id',_dm.id);markDirty('messages');DB._msgOpen=null;toast('Supprimé');go('msg')">🗑️</button>
+      <button class="btn btn-sm btn-red" onclick="DB.messages.splice(${idx},1);DB._msgOpen=null;toast('Supprimé');go('msg')">🗑️</button>
     </div></div>`;
   return h;
 }
@@ -1829,7 +1296,6 @@ function sendNewMsg() {
     date: new Date().toLocaleDateString('fr-FR'),
     read: false
   });
-  markDirty('messages');
   DB._msgView = null;
   toast('Message envoyé à ' + entIcon + ' ' + entName);
   go('msg');
@@ -1864,7 +1330,6 @@ function sendReply() {
     icon: '📤', subject: subj || 'RE: ' + orig.subject, body: body,
     date: new Date().toLocaleDateString('fr-FR'), read: false
   });
-  markDirty('messages');
   DB._msgView = null; DB._msgOpen = null;
   toast('Réponse envoyée à ' + orig.from);
   go('msg');
@@ -1889,7 +1354,7 @@ function pJobs() {
         </div>
         <div style="display:flex;flex-direction:column;gap:.3rem">
           <button class="btn btn-sm btn-blue" onclick="modalApply(${j.id})">📝 Postuler</button>
-          ${(isPatron && j.company === DB.job.company) ? `<button class="btn btn-sm btn-red" onclick="var _dj=DB.jobs[${i}];DB.jobs.splice(${i},1);if(_dj)dbDelete('jobs','id',_dj.id);markDirty('jobs');toast('Offre supprimée');go('jobs')" style="font-size:.7rem">🗑️</button>` : ''}
+          ${(isPatron && j.company === DB.job.company) ? `<button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);toast('Offre supprimée');go('jobs')" style="font-size:.7rem">🗑️</button>` : ''}
         </div>
       </div></div>`;
   });
@@ -1914,7 +1379,6 @@ function publishJob() {
     desc: document.getElementById('pjDesc').value || 'Rejoignez notre équipe !',
     postedBy: DB.user.name
   });
-  markDirty('jobs');
   closeModal(); toast('Offre publiée !'); go('jobs');
 }
 function modalApply(jobId) {
@@ -1934,7 +1398,6 @@ function submitApplication(company) {
       message: msg, date: new Date().toLocaleDateString('fr-FR')
     });
   }
-  markDirty('enterprise_data');
   closeModal(); toast('Candidature envoyée à ' + company + ' !'); go('jobs');
 }
 
@@ -2031,7 +1494,6 @@ function castVote(id, choice) {
     l.contre = l.total > 0 ? Math.round(l._contre / l.total * 100) : 0;
   }
   toast('Vote enregistré');
-  markDirty('laws','voted');
   go('vote');
 }
 
@@ -2124,15 +1586,12 @@ function pWPos() {
       h += '</div>';
     });
     var sub = DB.cart.reduce(function(s,c){return s+c.price*(c.qty||1)},0);
-    var hasTVA = DB.job.tvaEnabled !== false;
-    var tva = hasTVA ? Math.round(sub*DB.taxConfig.tva/100) : 0;
-    var total = sub + tva;
+    var tva = Math.round(sub*DB.taxConfig.tva/100);
     h += '<div style="margin-top:.6rem;padding-top:.6rem;border-top:2px solid rgba(240,180,41,.2)">';
     h += '<div style="display:flex;justify-content:space-between;font-size:.85rem;color:var(--t2)"><span>Sous-total</span><span>$' + sub.toLocaleString() + '</span></div>';
-    if (hasTVA) h += '<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--t3)"><span>TVA (' + DB.taxConfig.tva + '%)</span><span>$' + tva + '</span></div>';
-    else h += '<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--t3)"><span>TVA</span><span style="color:var(--green)">Exonéré</span></div>';
-    h += '<div style="display:flex;justify-content:space-between;font-family:Rajdhani,sans-serif;font-weight:700;font-size:1.3rem;color:var(--gold);margin-top:.3rem"><span>TOTAL</span><span>$' + total.toLocaleString() + '</span></div></div>';
-    h += '<div style="display:flex;gap:.4rem;margin-top:.8rem"><button class="btn btn-green" style="flex:1;padding:.7rem" onclick="doCheckout()">\u{1F4B3} Encaisser $' + total.toLocaleString() + '</button><button class="btn btn-outline" onclick="DB.cart=[];go(\'wpos\')">\u{1F5D1}\u{FE0F}</button></div>';
+    h += '<div style="display:flex;justify-content:space-between;font-size:.78rem;color:var(--t3)"><span>TVA (' + DB.taxConfig.tva + '%)</span><span>$' + tva + '</span></div>';
+    h += '<div style="display:flex;justify-content:space-between;font-family:Rajdhani,sans-serif;font-weight:700;font-size:1.3rem;color:var(--gold);margin-top:.3rem"><span>TOTAL</span><span>$' + (sub+tva).toLocaleString() + '</span></div></div>';
+    h += '<div style="display:flex;gap:.4rem;margin-top:.8rem"><button class="btn btn-green" style="flex:1;padding:.7rem" onclick="doCheckout()">\u{1F4B3} Encaisser $' + (sub+tva).toLocaleString() + '</button><button class="btn btn-outline" onclick="DB.cart=[];go(\'wpos\')">\u{1F5D1}\u{FE0F}</button></div>';
   }
   h += '</div>';
   h += '<div class="card"><div class="card-t">\u{1F4CA} Dernières Factures</div>';
@@ -2162,11 +1621,10 @@ function changeQty(idx, delta) {
 function doCheckout() {
   var j = DB.job;
   var sub = DB.cart.reduce(function(s,c){return s+c.price*(c.qty||1)},0);
-  var hasTVA = DB.job.tvaEnabled !== false;
-  var tva = hasTVA ? Math.round(sub * DB.taxConfig.tva / 100) : 0;
+  var tva = Math.round(sub * DB.taxConfig.tva / 100);
   var itemNames = [];
   DB.cart.forEach(function(c) { var q = c.qty||1; itemNames.push(q > 1 ? c.name + ' x' + q : c.name); });
-// Record invoice
+  // Record invoice
   const inv = {
     id: Date.now(), employee: DB.user.id, employeeName: DB.user.name,
     items: itemNames, total: sub, tva: tva,
@@ -2175,23 +1633,22 @@ function doCheckout() {
   };
   j.invoices.unshift(inv);
 
-  // Mettre à jour le solde bancaire automatiquement
-  if (!j.bankBalance && j.bankBalance !== 0) j.bankBalance = 0;
-  j.bankBalance += (sub + tva);
-  if (!j.comptaHistory) j.comptaHistory = [];
-  j.comptaHistory.unshift({id:Date.now(), date:inv.date, desc:'Facture: ' + itemNames.join(', '), amount:sub+tva, type:'in'});
-
-  // Update current week data
-  if (j.weeklyHistory.length) {
-    const week = j.weeklyHistory[0];
-    if (!week.data[DB.user.id]) week.data[DB.user.id] = {invoiced:0,count:0};
-    week.data[DB.user.id].invoiced += sub;
-    week.data[DB.user.id].count++;
+  // Auto-create current week entry if missing
+  var weekLabel = 'Sem. ' + getWeekNumber(new Date()) + ' (' + new Date().getFullYear() + ')';
+  if (!j.weeklyHistory.length || j.weeklyHistory[0].week !== weekLabel) {
+    j.weeklyHistory.unshift({week: weekLabel, data: {}});
+    if (j.weeklyHistory.length > 20) j.weeklyHistory.length = 20;
   }
 
+  // Update current week data
+  var week = j.weeklyHistory[0];
+  if (!week.data[DB.user.id]) week.data[DB.user.id] = {invoiced:0,count:0};
+  week.data[DB.user.id].invoiced += sub;
+  week.data[DB.user.id].count++;
+
   DB.cart = [];
+  saveDB();
   toast('Facture $'+(sub+tva).toLocaleString()+' émise — enregistrée');
-  markDirty('enterprise_data','citizen_salaries');
   go('wpos');
 }
 
@@ -2294,7 +1751,6 @@ function submitExpense() {
     type, amount, desc, date: new Date().toLocaleDateString('fr-FR'), status: 'pending'
   });
   toast('Note de frais soumise — $' + amount);
-  markDirty('enterprise_data');
   go('wfrais');
 }
 
@@ -2355,7 +1811,7 @@ function pWHR() {
       <td style="font-size:.82rem;max-width:250px">${r.reason}</td>
       <td class="mono" style="color:${r.amount?'var(--green)':'var(--t3)'}">${r.amount?'+$'+r.amount.toLocaleString():'—'}</td>
       <td style="font-size:.78rem;color:var(--t2)">${r.by}</td>
-      <td><button class="btn btn-sm btn-red" onclick="DB.job.hrRecords.splice(${realIdx},1);markDirty('enterprise_data');toast('Enregistrement supprimé');go('whr')" style="padding:.2rem .4rem">✕</button></td>
+      <td><button class="btn btn-sm btn-red" onclick="DB.job.hrRecords.splice(${realIdx},1);toast('Enregistrement supprimé');go('whr')" style="padding:.2rem .4rem">✕</button></td>
     </tr>`;
   });
   h += '</tbody></table></div>';
@@ -2394,7 +1850,6 @@ function submitHR(type) {
 
   closeModal();
   toast(isPrime ? 'Prime de $'+amount+' attribuée à '+emp.name : 'Sanction enregistrée pour '+emp.name);
-  markDirty('enterprise_data');
   go('whr');
 }
 
@@ -2432,7 +1887,7 @@ function pWCompta() {
   h += '<div class="stat"><div class="stat-l">CA Semaine</div><div class="stat-v" style="color:var(--green)">$' + totalCA.toLocaleString() + '</div><div class="stat-s">' + j.invoices.length + ' factures</div></div>';
   h += '<div class="stat"><div class="stat-l">Dépenses</div><div class="stat-v" style="color:var(--red)">$' + totalExpenses.toLocaleString() + '</div></div>';
   h += '<div class="stat"><div class="stat-l">Bénéfice Net</div><div class="stat-v" style="color:' + (net >= 0 ? 'var(--gold)' : 'var(--red)') + '">$' + net.toLocaleString() + '</div></div>';
-  h += '<div class="stat"><div class="stat-l">TVA Collectée</div><div class="stat-v" style="color:var(--orange)">' + (j.tvaEnabled!==false ? '$'+totalTVA.toLocaleString() : 'Exonéré') + '</div></div>';
+  h += '<div class="stat"><div class="stat-l">TVA Collectée</div><div class="stat-v" style="color:var(--orange)">$' + totalTVA.toLocaleString() + '</div></div>';
   h += '</div>';
 
   // Tabs
@@ -2479,12 +1934,21 @@ function pWCompta() {
     // Rentrées
     h += '<div class="card"><div class="card-t" style="color:var(--green)">\u{1F4C8} Rentrées d\'Argent</div>';
     h += '<table><thead><tr><th>Date</th><th>Description</th><th>Montant</th></tr></thead><tbody>';
+    var allIncome = [];
     j.invoices.slice(0,10).forEach(function(inv) {
-      h += '<tr><td style="font-size:.78rem">' + (inv.date||'') + ' ' + inv.time + '</td><td style="font-size:.82rem">' + inv.items.join(', ') + '</td><td class="mono" style="color:var(--green)">+$' + inv.total.toLocaleString() + '</td></tr>';
+      allIncome.push({date: (inv.date||'') + ' ' + inv.time, desc: inv.items.join(', ') + ' (' + inv.employeeName + ')', amount: inv.total, id: inv.id||0});
     });
-    if (!j.invoices.length) h += '<tr><td colspan="3" style="color:var(--t3);text-align:center">Aucune facture</td></tr>';
+    (j.comptaHistory||[]).filter(function(e){return e.type==='in'}).forEach(function(e) {
+      allIncome.push({date: e.date, desc: e.desc, amount: e.amount, id: e.id||0});
+    });
+    allIncome.sort(function(a,b){return (b.id||0)-(a.id||0)});
+    var totalIncome = allIncome.reduce(function(s,e){return s+e.amount},0);
+    allIncome.slice(0,10).forEach(function(e) {
+      h += '<tr><td style="font-size:.78rem">' + e.date + '</td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--green)">+$' + e.amount.toLocaleString() + '</td></tr>';
+    });
+    if (!allIncome.length) h += '<tr><td colspan="3" style="color:var(--t3);text-align:center">Aucune rentrée</td></tr>';
     h += '</tbody></table>';
-    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--green)">Total: <strong>$' + totalCA.toLocaleString() + '</strong></div></div>';
+    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--green)">Total: <strong>$' + totalIncome.toLocaleString() + '</strong></div></div>';
 
     // Sorties
     h += '<div class="card"><div class="card-t" style="color:var(--red)">\u{1F4C9} Sorties d\'Argent</div>';
@@ -2494,12 +1958,13 @@ function pWCompta() {
     j.employeeExpenses.filter(function(e){return e.status==='approved'}).forEach(function(e) { allExp.push({date:e.date, desc:'Frais ' + e.empName + ' — ' + e.desc, amount:e.amount, id:e.id||0}); });
     (j.comptaHistory||[]).filter(function(e){return e.type==='out'}).forEach(function(e) { allExp.push({date:e.date, desc:e.desc, amount:e.amount, id:e.id||0}); });
     allExp.sort(function(a,b){return (b.id||0)-(a.id||0)});
+    var totalAllExp = allExp.reduce(function(s,e){return s+e.amount},0);
     allExp.slice(0,10).forEach(function(e) {
       h += '<tr><td style="font-size:.78rem">' + e.date + '</td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">-$' + e.amount.toLocaleString() + '</td></tr>';
     });
     if (!allExp.length) h += '<tr><td colspan="3" style="color:var(--t3);text-align:center">Aucune dépense</td></tr>';
     h += '</tbody></table>';
-    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--red)">Total: <strong>$' + totalExpenses.toLocaleString() + '</strong></div></div>';
+    h += '<div style="margin-top:.5rem;font-size:.82rem;text-align:right;color:var(--red)">Total: <strong>$' + totalAllExp.toLocaleString() + '</strong></div></div>';
     h += '</div>';
 
     // Bank movements
@@ -2521,7 +1986,7 @@ function pWCompta() {
     h += '<div class="card"><div class="card-t" style="justify-content:space-between">\u{1F4B8} Charges de l\'Entreprise <button class="btn btn-sm btn-blue" onclick="modalAddCompanyExpense()">+ Ajouter</button></div>';
     h += '<table><thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Montant</th><th>Récurrent</th><th></th></tr></thead><tbody>';
     j.companyExpenses.forEach(function(e,i) {
-      h += '<tr><td style="font-size:.8rem">' + e.date + '</td><td><span class="badge b-purple">' + e.type + '</span></td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">$' + e.amount.toLocaleString() + '</td><td>' + (e.recurring ? '<span class="badge b-blue">Mensuel</span>' : '<span class="badge b-orange">Ponctuel</span>') + '</td><td><button class="btn btn-sm btn-red" onclick="var _de=DB.job.companyExpenses[' + i + '];DB.job.companyExpenses.splice(' + i + ',1);if(_de&&DB.job.bankBalance!==undefined)DB.job.bankBalance+=_de.amount;markDirty(\'enterprise_data\');toast(\'Charge supprimée — $\'+(_de?_de.amount:0)+\' restauré\');go(\'wcompta\')" style="padding:.2rem .4rem">\u2715</button></td></tr>';
+      h += '<tr><td style="font-size:.8rem">' + e.date + '</td><td><span class="badge b-purple">' + e.type + '</span></td><td style="font-size:.82rem">' + e.desc + '</td><td class="mono" style="color:var(--red)">$' + e.amount.toLocaleString() + '</td><td>' + (e.recurring ? '<span class="badge b-blue">Mensuel</span>' : '<span class="badge b-orange">Ponctuel</span>') + '</td><td><button class="btn btn-sm btn-red" onclick="DB.job.companyExpenses.splice(' + i + ',1);toast(\'Charge supprimée\');go(\'wcompta\')" style="padding:.2rem .4rem">\u2715</button></td></tr>';
     });
     h += '</tbody></table>';
     var recurr = j.companyExpenses.filter(function(e){return e.recurring}).reduce(function(s,e){return s+e.amount},0);
@@ -2539,8 +2004,8 @@ function pWCompta() {
       h += '<div><div style="font-weight:600;font-size:.88rem">' + e.empName + ' <span class="badge b-blue">' + e.type + '</span></div>';
       h += '<div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">' + e.desc + ' \u2014 ' + e.date + '</div></div>';
       h += '<div style="display:flex;align-items:center;gap:.5rem"><span class="mono" style="font-size:.95rem;color:var(--red)">$' + e.amount + '</span>';
-      h += '<button class="btn btn-sm btn-green" onclick="var _ea=DB.job.employeeExpenses[' + realIdx + '];_ea.status=\'approved\';if(!DB.job.bankBalance&&DB.job.bankBalance!==0)DB.job.bankBalance=0;DB.job.bankBalance-=_ea.amount;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString(\'fr-FR\'),desc:\'Frais approuvé: \'+_ea.desc,amount:_ea.amount,type:\'out\'});markDirty(\'enterprise_data\');toast(\'Approuvé — $\'+_ea.amount+\' déduit\');go(\'wcompta\')">\u2713</button>';
-      h += '<button class="btn btn-sm btn-red" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'rejected\';markDirty(\'enterprise_data\');toast(\'Refusé\');go(\'wcompta\')">\u2715</button></div></div>';
+      h += '<button class="btn btn-sm btn-green" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'approved\';toast(\'Approuvé\');go(\'wcompta\')">\u2713</button>';
+      h += '<button class="btn btn-sm btn-red" onclick="DB.job.employeeExpenses[' + realIdx + '].status=\'rejected\';toast(\'Refusé\');go(\'wcompta\')">\u2715</button></div></div>';
     });
     h += '</div>';
     h += '<div class="card"><div class="card-t">\u{1F4CB} Historique Traité</div><table><thead><tr><th>Date</th><th>Employé</th><th>Type</th><th>Montant</th><th>Statut</th></tr></thead><tbody>';
@@ -2604,7 +2069,7 @@ function doBankOp(type) {
     DB.job.comptaHistory.unshift({id:Date.now(), date:new Date().toLocaleDateString('fr-FR'), desc:desc, amount:amt, type:'out'});
   }
   if (DB.job.comptaHistory.length > 100) DB.job.comptaHistory.length = 100;
-  markDirty('enterprise_data');
+  saveDB();
   closeModal(); toast((type==='depot'?'Dépôt':'Retrait') + ' de $' + amt.toLocaleString() + ' enregistré'); go('wcompta');
 }
 function modalSetBalance() {
@@ -2612,7 +2077,7 @@ function modalSetBalance() {
     '<p style="font-size:.82rem;color:var(--t2);margin-bottom:.8rem">Solde actuel: <strong style="color:var(--gold)">$' + DB.job.bankBalance.toLocaleString() + '</strong></p>' +
     '<div class="fg"><label>Nouveau solde ($)</label><input type="number" id="newBal" value="' + DB.job.bankBalance + '"></div>' +
     '<div class="fg"><label>Motif</label><input id="balReason" placeholder="Ex: Correction, inventaire de caisse..."></div>' +
-    '<div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var nb=parseInt(document.getElementById(\'newBal\').value)||0;var diff=nb-DB.job.bankBalance;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString(\'fr-FR\'),desc:\'Ajustement: \'+(document.getElementById(\'balReason\').value||\'—\'),amount:Math.abs(diff),type:diff>=0?\'in\':\'out\'});DB.job.bankBalance=nb;markDirty(\'enterprise_data\');closeModal();toast(\'Solde ajusté à $\'+nb.toLocaleString());go(\'wcompta\')">Appliquer</button></div>');
+    '<div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var nb=parseInt(document.getElementById(\'newBal\').value)||0;var diff=nb-DB.job.bankBalance;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString(\'fr-FR\'),desc:\'Ajustement: \'+(document.getElementById(\'balReason\').value||\'—\'),amount:Math.abs(diff),type:diff>=0?\'in\':\'out\'});DB.job.bankBalance=nb;saveDB();closeModal();toast(\'Solde ajusté à $\'+nb.toLocaleString());go(\'wcompta\')">Appliquer</button></div>');
 }
 function checkWeeklyClose(j) {
   if (!j.comptaWeeks) j.comptaWeeks = [];
@@ -2639,7 +2104,7 @@ function modalAddCompanyExpense() {
     <div class="row"><div class="fg"><label>Type</label><select id="ceType"><option>Loyer</option><option>Assurance</option><option>Électricité</option><option>Eau</option><option>Réparation</option><option>Fournitures</option><option>Marketing</option><option>Juridique</option><option>Autre</option></select></div><div class="fg"><label>Montant ($)</label><input type="number" id="ceAmt" placeholder="0"></div></div>
     <div class="fg"><label>Description</label><input id="ceDesc" placeholder="Détail de la dépense"></div>
     <div class="fg"><label style="display:flex;align-items:center;gap:.4rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ceRecur"> Charge récurrente (mensuelle)</label></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});if(!DB.job.bankBalance&&DB.job.bankBalance!==0)DB.job.bankBalance=0;DB.job.bankBalance-=a;if(!DB.job.comptaHistory)DB.job.comptaHistory=[];DB.job.comptaHistory.unshift({id:Date.now(),date:new Date().toLocaleDateString('fr-FR'),desc:'Charge: '+(document.getElementById('ceDesc').value||document.getElementById('ceType').value),amount:a,type:'out'});markDirty('enterprise_data');closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const a=parseInt(document.getElementById('ceAmt').value);if(!a){err('Montant requis');return}DB.job.companyExpenses.unshift({id:Date.now(),type:document.getElementById('ceType').value,amount:a,desc:document.getElementById('ceDesc').value||'—',date:new Date().toLocaleDateString('fr-FR'),recurring:document.getElementById('ceRecur').checked});closeModal();toast('Charge ajoutée');go('wcompta')">Ajouter</button></div>`);
 }
 
 function payWeeklySalaries() {
@@ -2736,8 +2201,8 @@ function confirmPaySalaries() {
 
   closeModal();
   if (count === 0) { toast('Salaires déjà versés'); return; }
+  saveDB();
   toast(count + ' salaires versés — Total: $' + totalPaid.toLocaleString());
-  markDirty('enterprise_data','citizen_salaries');
   go('wcompta');
 }
 
@@ -2748,8 +2213,7 @@ function previewTax() {
   const net = Math.max(0, ca - exp);
   let tax = 0;
   DB.taxConfig.tranches.forEach(t => { if(net>t.min){const taxable=Math.min(net,t.max)-t.min;if(taxable>0)tax+=Math.round(taxable*t.rate/100)} });
-  const hasTVA = DB.job.tvaEnabled !== false;
-  const tva = hasTVA ? Math.round(ca * DB.taxConfig.tva / 100) : 0;
+  const tva = Math.round(ca * DB.taxConfig.tva / 100);
   document.getElementById('taxCalcResult').innerHTML = `<div class="stats"><div class="stat"><div class="stat-l">Impôt Progressif</div><div class="stat-v" style="color:var(--gold);font-size:1.2rem">$${tax.toLocaleString()}</div></div><div class="stat"><div class="stat-l">TVA (${DB.taxConfig.tva}%)</div><div class="stat-v" style="color:var(--orange);font-size:1.2rem">$${tva.toLocaleString()}</div></div><div class="stat"><div class="stat-l">Total à payer</div><div class="stat-v" style="color:var(--red);font-size:1.2rem">$${(tax+tva).toLocaleString()}</div></div></div>`;
 }
 
@@ -2760,7 +2224,7 @@ function sendTaxDeclaration() {
   const net = Math.max(0, ca - exp);
   let tax = 0;
   DB.taxConfig.tranches.forEach(t => { if(net>t.min){const taxable=Math.min(net,t.max)-t.min;if(taxable>0)tax+=Math.round(taxable*t.rate/100)} });
-  const tva = (DB.job.tvaEnabled !== false) ? Math.round(ca * DB.taxConfig.tva / 100) : 0;
+  const tva = Math.round(ca * DB.taxConfig.tva / 100);
   const period = 'Q1 2026';
   const date = new Date().toLocaleDateString('fr-FR');
 
@@ -2868,41 +2332,46 @@ function sendInternalMsg() {
 // ============ WORK: DOSSIERS PATIENTS (EMS) ============
 function pWPatients() {
   if (!DB.job) return '';
-  var v = DB._patientView;
+  const v = DB._patientView;
   if (v && v.startsWith('cit:')) return pWPatientDetail(v.replace('cit:',''), false);
   if (v && v.startsWith('tmp:')) return pWPatientDetail(v.replace('tmp:',''), true);
 
-  var citWithRecords = Object.keys(DB.healthRecords);
-  var criticals = citWithRecords.filter(function(cid) { var r=DB.healthRecords[cid]; return r.status==='Critique'||r.status==='Hospitalisé'; });
-  var h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem"><div><h1 style="font-family:Rajdhani,sans-serif;font-size:1.5rem;font-weight:700">🩺 Dossiers Patients</h1><p style="color:var(--t2);font-size:.82rem">' + citWithRecords.length + ' dossiers citoyen + ' + DB.tempPatients.length + ' temporaires</p></div><button class="btn btn-sm btn-blue" onclick="modalCreateTempPatient()">+ Dossier Temporaire</button></div>';
+  const citWithRecords = Object.keys(DB.healthRecords);
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🩺 Dossiers Patients</h1><p style="color:var(--t2);font-size:.82rem">${citWithRecords.length} dossiers citoyen + ${DB.tempPatients.length} temporaire${DB.tempPatients.length>1?'s':''}</p></div>
+    <button class="btn btn-sm btn-blue" onclick="modalCreateTempPatient()">+ Dossier Temporaire</button>
+  </div>`;
 
-  h += '<div class="stats"><div class="stat"><div class="stat-l">Dossiers</div><div class="stat-v" style="color:var(--blue)">' + citWithRecords.length + '</div></div><div class="stat"><div class="stat-l">Critiques</div><div class="stat-v" style="color:' + (criticals.length ? 'var(--red)' : 'var(--green)') + '">' + criticals.length + '</div></div><div class="stat"><div class="stat-l">Temporaires</div><div class="stat-v" style="color:var(--orange)">' + DB.tempPatients.length + '</div></div></div>';
+  // Search
+  h += `<div class="card"><div class="card-t">🔍 Rechercher un Patient</div>
+    <div style="display:flex;gap:.4rem"><input id="patSearch" placeholder="ID citoyen (SA-XXXX) ou nom..." style="flex:1"><button class="btn btn-sm btn-blue" onclick="searchPatient()">Rechercher</button></div>
+    <div id="patSearchResult" style="margin-top:.6rem"></div>
+  </div>`;
 
-  if (criticals.length) {
-    h += '<div class="card" style="border-color:rgba(239,68,68,.3)"><div class="card-t" style="color:var(--red)">🚨 Patients critiques / hospitalisés</div>';
-    criticals.forEach(function(cid) {
-      var rec = DB.healthRecords[cid]; var cit = DB.citizens.find(function(c){return c.id===cid});
-      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:rgba(239,68,68,.06);border-radius:6px;margin-bottom:.3rem"><div><strong>' + (cit?cit.name:cid) + '</strong> <span class="mono" style="font-size:.72rem;color:var(--t3)">' + cid + '</span> ' + _stBadge(rec.status) + '</div><button class="btn btn-sm btn-blue" onclick="DB._patientView=\'cit:' + cid + '\';go(\'wpatients\')">Ouvrir</button></div>';
-    });
-    h += '</div>';
-  }
-
-  h += '<div class="card"><div class="card-t">🔍 Rechercher un Patient</div><div style="display:flex;gap:.4rem"><input id="patSearch" placeholder="ID citoyen ou nom..." style="flex:1"><button class="btn btn-sm btn-blue" onclick="searchPatient()">Rechercher</button></div><div id="patSearchResult" style="margin-top:.6rem"></div></div>';
-
-  h += '<div class="card"><div class="card-t">📋 Dossiers Citoyens</div><table><thead><tr><th>ID</th><th>Nom</th><th>Statut</th><th>Groupe</th><th>Allergies</th><th>Dernière visite</th><th></th></tr></thead><tbody>';
-  citWithRecords.forEach(function(cid) {
-    var rec = DB.healthRecords[cid]; var cit = DB.citizens.find(function(c){return c.id===cid});
-    var name = cit ? cit.name : cid;
-    var lastVisit = (rec.history && rec.history.length) ? rec.history[0].date : '—';
-    var st = rec.status || 'Stable';
-    h += '<tr><td class="mono" style="font-size:.78rem;color:var(--gold)">' + cid + '</td><td style="font-weight:600">' + name + '</td><td>' + _stBadge(st) + '</td><td style="color:var(--red);font-weight:600">' + (rec.blood||'?') + '</td><td style="font-size:.82rem;color:var(--orange)">' + (rec.allergies||'—') + '</td><td style="font-size:.8rem">' + lastVisit + '</td><td><button class="btn btn-sm btn-blue" onclick="DB._patientView=\'cit:' + cid + '\';go(\'wpatients\')">Ouvrir</button></td></tr>';
+  // Citizen records
+  h += `<div class="card"><div class="card-t">📋 Dossiers Citoyens</div>`;
+  h += '<table><thead><tr><th>ID</th><th>Nom</th><th>Groupe</th><th>Allergies</th><th>Dernière visite</th><th></th></tr></thead><tbody>';
+  citWithRecords.forEach(cid => {
+    const rec = DB.healthRecords[cid];
+    const cit = DB.citizens.find(c=>c.id===cid);
+    const name = cit ? cit.name : cid;
+    const lastVisit = rec.history.length ? rec.history[0].date : '—';
+    h += `<tr><td class="mono" style="font-size:.78rem;color:var(--gold)">${cid}</td><td style="font-weight:600">${name}</td><td style="color:var(--red);font-weight:600">${rec.blood}</td><td style="font-size:.82rem;color:var(--orange)">${rec.allergies}</td><td style="font-size:.8rem">${lastVisit}</td>
+      <td><button class="btn btn-sm btn-blue" onclick="DB._patientView='cit:${cid}';go('wpatients')">Ouvrir</button></td></tr>`;
   });
   h += '</tbody></table></div>';
 
+  // Temp patient files
   if (DB.tempPatients.length) {
-    h += '<div class="card"><div class="card-t" style="color:var(--orange)">⚠️ Dossiers Temporaires</div>';
-    DB.tempPatients.forEach(function(p,i) {
-      h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:.6rem;background:var(--input);border:1px solid rgba(249,115,22,.2);border-radius:8px;margin-bottom:.4rem"><div><div style="font-weight:600;font-size:.88rem"><span class="mono" style="color:var(--orange)">' + p.id + '</span> — ' + p.name + '</div><div style="font-size:.78rem;color:var(--t3)">Créé le ' + p.created + ' par ' + p.createdBy + '</div></div><div style="display:flex;gap:.3rem"><button class="btn btn-sm btn-blue" onclick="DB._patientView=\'tmp:' + i + '\';go(\'wpatients\')">Ouvrir</button><button class="btn btn-sm btn-outline" onclick="modalLinkTempPatient(' + i + ')" title="Lier">🔗</button></div></div>';
+    h += `<div class="card"><div class="card-t" style="color:var(--orange)">⚠️ Dossiers Temporaires (sans compte citoyen)</div>`;
+    DB.tempPatients.forEach((p,i) => {
+      h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:.6rem;background:var(--input);border:1px solid rgba(249,115,22,.2);border-radius:8px;margin-bottom:.4rem">
+        <div><div style="font-weight:600;font-size:.88rem"><span class="mono" style="color:var(--orange)">${p.id}</span> — ${p.name}</div>
+          <div style="font-size:.78rem;color:var(--t3)">Créé le ${p.created} par ${p.createdBy} — ${p.desc}</div></div>
+        <div style="display:flex;gap:.3rem">
+          <button class="btn btn-sm btn-blue" onclick="DB._patientView='tmp:${i}';go('wpatients')">Ouvrir</button>
+          <button class="btn btn-sm btn-outline" onclick="modalLinkTempPatient(${i})" title="Lier à un citoyen">🔗</button>
+        </div></div>`;
     });
     h += '</div>';
   }
@@ -2910,231 +2379,148 @@ function pWPatients() {
 }
 
 function pWPatientDetail(id, isTemp) {
-  var rec, name, patId;
+  let rec, name, patId;
   if (isTemp) {
-    var p = DB.tempPatients[parseInt(id)];
+    const p = DB.tempPatients[parseInt(id)];
     if (!p) { DB._patientView=null; return pWPatients(); }
-    rec = { blood:'?', sex:'?', dob:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Non renseigné', ssn:'', insurance:'', address:'', status:p.status||'En soins', vitals:p.vitals||[], treatments:p.treatments||[], antecedents:p.antecedents||[], prescriptions:p.prescriptions||[], notes_internes:p.notes_internes||[], history:p.history||[] };
+    rec = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Non renseigné', history: p.history };
     name = p.name; patId = p.id;
   } else {
     rec = DB.healthRecords[id];
     if (!rec) { DB._patientView=null; return pWPatients(); }
-    if (!rec.vitals) rec.vitals=[]; if (!rec.treatments) rec.treatments=[]; if (!rec.antecedents) rec.antecedents=[];
-    if (!rec.prescriptions) rec.prescriptions=[]; if (!rec.notes_internes) rec.notes_internes=[]; if (!rec.history) rec.history=[];
-    var cit = DB.citizens.find(function(c){return c.id===id}); name = cit ? cit.name : id; patId = id;
+    const cit = DB.citizens.find(c=>c.id===id);
+    name = cit ? cit.name : id; patId = id;
   }
-  var st = rec.status || 'Stable';
-  var h = '<div style="margin-bottom:.8rem;display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-sm btn-outline" onclick="DB._patientView=null;go(\'wpatients\')">← Retour</button><button class="btn btn-sm btn-outline" onclick="modalChangePatientStatus(\'' + id + '\',' + isTemp + ')">🔄 Statut</button></div>';
-  h += '<div style="margin-bottom:1rem;display:flex;align-items:center;gap:.8rem"><div style="font-size:2rem">🏥</div><div style="flex:1"><h1 style="font-family:Rajdhani,sans-serif;font-size:1.4rem;font-weight:700">' + name + '</h1><p style="color:var(--t2);font-size:.82rem">' + patId + (isTemp?' <span class="badge b-orange">Temporaire</span>':'') + '</p></div><div style="text-align:right"><div style="font-size:.65rem;color:var(--t3);text-transform:uppercase">Statut</div><div style="font-weight:700;color:' + _stColor(st) + ';font-size:1.1rem">' + st + '</div></div></div>';
+
+  let h = `<div style="margin-bottom:.8rem"><button class="btn btn-sm btn-outline" onclick="DB._patientView=null;go('wpatients')">← Retour</button></div>`;
+  h += `<div style="margin-bottom:1rem;display:flex;align-items:center;gap:.8rem">
+    <div style="font-size:2rem">🏥</div>
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.4rem;font-weight:700">${name}</h1>
+    <p style="color:var(--t2);font-size:.82rem">${patId} ${isTemp?'<span class="badge b-orange">Temporaire</span>':''}</p></div>
+  </div>`;
 
   // Profile
-  h += '<div class="card"><div class="card-t" style="justify-content:space-between">👤 Profil Médical ' + (!isTemp ? '<button class="btn btn-sm btn-outline" onclick="modalEditMedProfile(\'' + id + '\')">✏️ Modifier</button>' : '') + '</div><div class="health-profile">';
-  h += '<div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">' + (rec.blood||'?') + '</strong></div>';
-  h += '<div class="health-row"><span>Sexe</span><strong>' + (rec.sex||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Date de naissance</span><strong>' + (rec.dob||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Taille</span><strong>' + (rec.height||'?') + '</strong></div>';
-  h += '<div class="health-row"><span>Poids</span><strong>' + (rec.weight||'?') + '</strong></div>';
-  h += '<div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">' + (rec.allergies||'Aucune') + '</strong></div>';
-  h += '<div class="health-row"><span>Pathologies</span><strong style="font-size:.8rem">' + (rec.conditions||'Aucune') + '</strong></div>';
-  h += '<div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">' + (rec.emergency||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>N° Sécu</span><strong class="mono" style="font-size:.8rem">' + (rec.ssn||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Assurance</span><strong style="font-size:.8rem">' + (rec.insurance||'Non renseigné') + '</strong></div>';
-  h += '<div class="health-row"><span>Adresse</span><strong style="font-size:.8rem">' + (rec.address||'Non renseigné') + '</strong></div>';
-  h += '</div></div>';
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">👤 Profil Médical ${!isTemp?`<button class="btn btn-sm btn-outline" onclick="modalEditMedProfile('${id}')">✏️ Modifier</button>`:''}</div>
+    <div class="health-profile">
+      <div class="health-row"><span>Groupe sanguin</span><strong style="color:var(--red)">${rec.blood}</strong></div>
+      <div class="health-row"><span>Allergies</span><strong style="color:var(--orange)">${rec.allergies}</strong></div>
+      <div class="health-row"><span>Taille</span><strong>${rec.height}</strong></div>
+      <div class="health-row"><span>Poids</span><strong>${rec.weight}</strong></div>
+      <div class="health-row"><span>Contact urgence</span><strong style="font-size:.8rem">${rec.emergency}</strong></div>
+      <div class="health-row"><span>Pathologies</span><strong style="font-size:.8rem">${rec.conditions}</strong></div>
+    </div></div>`;
 
-  // Vitals
-  h += '<div class="card"><div class="card-t" style="justify-content:space-between">💓 Constantes Vitales <button class="btn btn-sm btn-green" onclick="modalAddVitals(\'' + id + '\',' + isTemp + ')">+ Constantes</button></div>';
-  if (rec.vitals.length) {
-    var vv = rec.vitals[0];
-    h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:.5rem;margin-bottom:.6rem">';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.5rem .6rem;text-align:center"><div style="font-size:.6rem;color:var(--t3);text-transform:uppercase">Tension</div><div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700;color:var(--red)">' + (vv.bp||'—') + '</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.5rem .6rem;text-align:center"><div style="font-size:.6rem;color:var(--t3);text-transform:uppercase">Pouls</div><div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700;color:var(--orange)">' + (vv.hr||'—') + '</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.5rem .6rem;text-align:center"><div style="font-size:.6rem;color:var(--t3);text-transform:uppercase">Temp</div><div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700;color:var(--gold)">' + (vv.temp||'—') + '°C</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.5rem .6rem;text-align:center"><div style="font-size:.6rem;color:var(--t3);text-transform:uppercase">SpO2</div><div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700;color:var(--cyan)">' + (vv.spo2||'—') + '%</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.5rem .6rem;text-align:center"><div style="font-size:.6rem;color:var(--t3);text-transform:uppercase">Douleur</div><div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700">' + (vv.pain||'—') + '/10</div></div>';
-    h += '<div style="background:var(--input);border-radius:8px;padding:.5rem .6rem;text-align:center"><div style="font-size:.6rem;color:var(--t3);text-transform:uppercase">Glasgow</div><div style="font-family:Rajdhani,sans-serif;font-size:1.1rem;font-weight:700">' + (vv.glasgow||'—') + '/15</div></div>';
-    h += '</div><div style="font-size:.72rem;color:var(--t3)">Pris le ' + (vv.date||'—') + ' par ' + (vv.by||'—') + '</div>';
-  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucune constante.</p>';
-  h += '</div>';
-
-  // Treatments
-  h += '<div class="card"><div class="card-t" style="justify-content:space-between">💊 Traitements en Cours <button class="btn btn-sm btn-green" onclick="modalAddTreatment(\'' + id + '\',' + isTemp + ')">+ Traitement</button></div>';
-  if (rec.treatments.length) {
-    rec.treatments.forEach(function(t,ti) {
-      h += '<div style="display:flex;align-items:center;gap:.6rem;padding:.5rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;border-left:3px solid var(--blue)"><div style="flex:1"><strong style="font-size:.88rem">💊 ' + t.name + '</strong><div style="font-size:.78rem;color:var(--t2)">' + (t.dosage||'') + ' — ' + (t.frequency||'') + '</div></div><div style="font-size:.72rem;color:var(--t3);text-align:right">' + (t.start||'') + ' → ' + (t.end||'en cours') + '<br>Dr. ' + (t.doctor||'—') + '</div></div>';
-    });
-  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucun traitement.</p>';
-  h += '</div>';
-
-  // Prescriptions
-  h += '<div class="card"><div class="card-t" style="justify-content:space-between">📝 Ordonnances <button class="btn btn-sm btn-green" onclick="modalAddPrescription(\'' + id + '\',' + isTemp + ')">+ Ordonnance</button></div>';
-  if (rec.prescriptions.length) {
-    rec.prescriptions.forEach(function(p) {
-      h += '<div style="padding:.55rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.4rem;border-left:3px solid var(--cyan)"><div style="display:flex;justify-content:space-between"><strong style="font-size:.88rem">📋 Ordonnance du ' + (p.date||'—') + '</strong><span style="font-size:.72rem;color:var(--t3)">Dr. ' + (p.doctor||'—') + '</span></div><div style="font-size:.82rem;color:var(--t2);margin-top:.2rem;white-space:pre-line">' + (p.content||'') + '</div></div>';
-    });
-  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucune ordonnance.</p>';
-  h += '</div>';
-
-  // Antecedents
-  h += '<div class="card"><div class="card-t" style="justify-content:space-between">📂 Antécédents <button class="btn btn-sm btn-green" onclick="modalAddAntecedent(\'' + id + '\',' + isTemp + ')">+ Antécédent</button></div>';
-  if (rec.antecedents.length) {
-    rec.antecedents.forEach(function(a) {
-      h += '<div style="padding:.4rem .6rem;background:var(--input);border-radius:6px;margin-bottom:.3rem;font-size:.84rem;border-left:3px solid var(--purple)"><strong>' + a.title + '</strong> <span style="color:var(--t3);font-size:.75rem">' + (a.date||'') + ' — ' + (a.type||'') + '</span><div style="font-size:.78rem;color:var(--t2)">' + (a.notes||'') + '</div></div>';
-    });
-  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucun antécédent.</p>';
-  h += '</div>';
-
-  // Internal notes
-  h += '<div class="card" style="border-color:rgba(239,68,68,.15)"><div class="card-t" style="justify-content:space-between;color:var(--red)">🔒 Notes Internes SAMS <button class="btn btn-sm btn-outline" style="border-color:rgba(239,68,68,.3);color:var(--red)" onclick="modalAddInternalNote(\'' + id + '\',' + isTemp + ')">+ Note</button></div><p style="font-size:.72rem;color:var(--t3);margin-bottom:.4rem">Visibles uniquement par le SAMS</p>';
-  if (rec.notes_internes.length) {
-    rec.notes_internes.forEach(function(n) {
-      h += '<div style="padding:.45rem .6rem;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.1);border-radius:6px;margin-bottom:.3rem"><div style="display:flex;justify-content:space-between"><span style="font-size:.75rem;color:var(--red);font-weight:600">' + (n.author||'—') + '</span><span style="font-size:.7rem;color:var(--t3)">' + (n.date||'') + '</span></div><div style="font-size:.82rem;margin-top:.15rem">' + (n.text||'') + '</div></div>';
-    });
-  } else h += '<p style="color:var(--t3);font-size:.83rem">Aucune note.</p>';
-  h += '</div>';
-
-  // History
-  h += '<div class="card"><div class="card-t" style="justify-content:space-between">📋 Historique des Soins <button class="btn btn-sm btn-green" onclick="modalAddSoin(\'' + id + '\',' + isTemp + ')">+ Soin</button></div><div style="margin-top:.3rem">';
-  if (!rec.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin.</p>';
-  rec.history.forEach(function(e) {
-    h += '<div class="timeline-item"><div class="timeline-date">' + e.date + ' — <span class="badge ' + e.badge + '">' + e.type + '</span>' + _sevBadge(e.severity) + '</div>';
-    h += '<div class="timeline-text"><strong>' + e.title + '</strong></div>';
-    h += '<div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ' + e.doctor + (e.location ? ' — 📍 ' + e.location : '') + '</div>';
-    h += '<div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">' + e.notes + '</div>';
-    if (e.prescription) h += '<div style="font-size:.78rem;color:var(--cyan);margin-top:.15rem">💊 ' + e.prescription + '</div>';
-    if (e.followup) h += '<div style="font-size:.78rem;color:var(--gold);margin-top:.15rem">📅 Suivi: ' + e.followup + '</div>';
-    h += '</div>';
+  // Add entry button
+  h += `<div class="card"><div class="card-t" style="justify-content:space-between">📋 Historique des Soins <button class="btn btn-sm btn-green" onclick="modalAddSoin('${id}',${isTemp})">+ Ajouter un Soin</button></div><div style="margin-top:.3rem">`;
+  if (!rec.history.length) h += '<p style="color:var(--t3);font-size:.83rem">Aucun soin enregistré.</p>';
+  rec.history.forEach(e => {
+    h += `<div class="timeline-item">
+      <div class="timeline-date">${e.date} — <span class="badge ${e.badge}">${e.type}</span></div>
+      <div class="timeline-text"><strong>${e.title}</strong></div>
+      <div style="font-size:.78rem;color:var(--t2);margin-top:.15rem">👨‍⚕️ ${e.doctor}</div>
+      <div style="font-size:.8rem;color:var(--t2);margin-top:.1rem">${e.notes}</div>
+    </div>`;
   });
   h += '</div></div>';
   return h;
 }
 
 function searchPatient() {
-  var q = document.getElementById('patSearch').value.trim().toLowerCase(); var el = document.getElementById('patSearchResult');
+  const q = document.getElementById('patSearch').value.trim().toLowerCase();
+  const el = document.getElementById('patSearchResult');
   if (!q) { el.innerHTML=''; return; }
-  var results = DB.citizens.filter(function(c) { return c.id.toLowerCase().includes(q) || c.name.toLowerCase().includes(q); });
-  if (!results.length) { el.innerHTML='<div style="padding:.5rem .7rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);border-radius:6px;font-size:.83rem;color:var(--orange)">❌ Aucun citoyen trouvé. Créez un dossier temporaire si nécessaire.</div>'; return; }
-  var h = '';
-  results.forEach(function(c) {
-    var has = !!DB.healthRecords[c.id];
-    h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.3rem"><div><strong>' + c.name + '</strong> <span class="mono" style="font-size:.75rem;color:var(--t3)">' + c.id + '</span> ' + (has ? '<span class="badge b-green">Dossier existant</span>' : '<span class="badge b-orange">Pas de dossier</span>') + '</div><div>' + (has ? '<button class="btn btn-sm btn-blue" onclick="DB._patientView=\'cit:' + c.id + '\';go(\'wpatients\')">Ouvrir</button>' : '<button class="btn btn-sm btn-green" onclick="createNewPatientRecord(\'' + c.id + '\')">Créer</button>') + '</div></div>';
+  // Search in citizens
+  const results = DB.citizens.filter(c => c.id.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
+  if (!results.length) {
+    el.innerHTML = `<div style="padding:.5rem .7rem;background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);border-radius:6px;font-size:.83rem;color:var(--orange)">❌ Aucun citoyen trouvé pour "${q}"<br><span style="font-size:.78rem;color:var(--t3)">Vous pouvez créer un dossier temporaire si le patient n'a pas de compte.</span></div>`;
+    return;
+  }
+  let h = '';
+  results.forEach(c => {
+    const hasRecord = !!DB.healthRecords[c.id];
+    h += `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.3rem">
+      <div><strong>${c.name}</strong> <span class="mono" style="font-size:.75rem;color:var(--t3)">${c.id}</span> ${hasRecord?'<span class="badge b-green">Dossier existant</span>':'<span class="badge b-orange">Pas de dossier</span>'}</div>
+      <div style="display:flex;gap:.3rem">
+        ${hasRecord?`<button class="btn btn-sm btn-blue" onclick="DB._patientView='cit:${c.id}';go('wpatients')">Ouvrir</button>`:`<button class="btn btn-sm btn-green" onclick="createNewPatientRecord('${c.id}')">Créer le dossier</button>`}
+      </div></div>`;
   });
   el.innerHTML = h;
 }
 
 function createNewPatientRecord(citizenId) {
-  DB.healthRecords[citizenId] = { blood:'?', sex:'Non renseigné', dob:'Non renseigné', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', ssn:'', insurance:'', address:'', status:'Stable', vitals:[], treatments:[], antecedents:[], prescriptions:[], notes_internes:[], history:[] };
-  markDirty('health_records'); toast('Dossier créé'); DB._patientView = 'cit:' + citizenId; go('wpatients');
+  DB.healthRecords[citizenId] = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', history:[] };
+  toast('Dossier créé pour ' + citizenId);
+  DB._patientView = 'cit:' + citizenId;
+  go('wpatients');
 }
 
 function modalCreateTempPatient() {
-  modal('<div class="modal-t">⚠️ Dossier Temporaire</div><p style="font-size:.82rem;color:var(--orange);margin-bottom:.8rem">Pour un patient sans compte citoyen.</p><div class="fg"><label>Nom / Description</label><input id="tpName" placeholder="Ex: Homme ~30 ans, blessé Vinewood"></div><div class="fg"><label>Détails</label><input id="tpDesc" placeholder="Circonstances..."></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doCreateTempPatient()">Créer</button></div>');
-}
-function doCreateTempPatient() {
-  var n = document.getElementById('tpName').value || 'Patient inconnu';
-  DB.tempPatients.push({id:'TEMP-'+Math.floor(100+Math.random()*900), name:n, desc:document.getElementById('tpDesc').value||'—', created:new Date().toLocaleDateString('fr-FR'), createdBy:DB.user.name, status:'En soins', vitals:[], treatments:[], antecedents:[], prescriptions:[], notes_internes:[], history:[]});
-  markDirty('temp_patients'); closeModal(); toast('Dossier temporaire créé'); go('wpatients');
+  modal(`<div class="modal-t">⚠️ Créer un Dossier Temporaire</div>
+    <p style="font-size:.82rem;color:var(--orange);margin-bottom:.8rem">Pour un patient sans compte citoyen. Le dossier pourra être lié à un citoyen plus tard.</p>
+    <div class="fg"><label>Nom / Description du patient</label><input id="tpName" placeholder="Ex: Homme ~30 ans, blessé Vinewood"></div>
+    <div class="fg"><label>Détails supplémentaires</label><input id="tpDesc" placeholder="Circonstances, lieu trouvé..."></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('tpName').value||'Patient inconnu';DB.tempPatients.push({id:'TEMP-'+Math.floor(100+Math.random()*900),name:n,desc:document.getElementById('tpDesc').value||'—',created:new Date().toLocaleDateString('fr-FR'),createdBy:DB.user.name,history:[]});closeModal();toast('Dossier temporaire créé');go('wpatients')">Créer</button></div>`);
 }
 
 function modalLinkTempPatient(tmpIdx) {
-  var p = DB.tempPatients[tmpIdx];
-  var citOpts = DB.citizens.map(function(c){return '<option value="' + c.id + '">' + c.name + ' (' + c.id + ')</option>';}).join('');
-  modal('<div class="modal-t">🔗 Lier — ' + p.name + '</div><div class="fg"><label>Citoyen</label><select id="linkCit">' + citOpts + '</select></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="linkTempToCitizen(' + tmpIdx + ')">Lier</button></div>');
+  const p = DB.tempPatients[tmpIdx];
+  const citOpts = DB.citizens.map(c=>`<option value="${c.id}">${c.name} (${c.id})</option>`).join('');
+  modal(`<div class="modal-t">🔗 Lier à un Citoyen — ${p.name}</div>
+    <p style="font-size:.82rem;color:var(--t2);margin-bottom:.8rem">Transférer ce dossier temporaire vers le carnet de santé d'un citoyen inscrit.</p>
+    <div class="fg"><label>Citoyen</label><select id="linkCit">${citOpts}</select></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="linkTempToCitizen(${tmpIdx})">Lier</button></div>`);
 }
+
 function linkTempToCitizen(tmpIdx) {
-  var p = DB.tempPatients[tmpIdx]; var cid = document.getElementById('linkCit').value;
-  if (!DB.healthRecords[cid]) DB.healthRecords[cid] = { blood:'?', sex:'?', dob:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune', ssn:'', insurance:'', address:'', status:'Stable', vitals:[], treatments:[], antecedents:[], prescriptions:[], notes_internes:[], history:[] };
-  var r = DB.healthRecords[cid];
-  (p.history||[]).forEach(function(x){r.history.unshift(x);}); (p.vitals||[]).forEach(function(x){r.vitals.unshift(x);});
-  (p.treatments||[]).forEach(function(x){r.treatments.push(x);}); (p.prescriptions||[]).forEach(function(x){r.prescriptions.push(x);});
-  (p.antecedents||[]).forEach(function(x){r.antecedents.push(x);}); (p.notes_internes||[]).forEach(function(x){r.notes_internes.push(x);});
-  DB.tempPatients.splice(tmpIdx, 1); markDirty('health_records','temp_patients');
-  var cit = DB.citizens.find(function(c){return c.id===cid});
-  closeModal(); toast('Transféré vers ' + (cit?cit.name:cid)); DB._patientView = 'cit:' + cid; go('wpatients');
-}
-
-function modalChangePatientStatus(id, isTemp) {
-  modal('<div class="modal-t">🔄 Changer le Statut</div><div class="fg"><label>Statut</label><select id="psStatus"><option>Stable</option><option>En soins</option><option>Hospitalisé</option><option>Critique</option><option>Sorti</option><option>Décédé</option></select></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="doChangePatientStatus(\'' + id + '\',' + isTemp + ')">Appliquer</button></div>');
-}
-function doChangePatientStatus(id, isTemp) {
-  var st = document.getElementById('psStatus').value;
-  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(p) p.status=st; } else { if(DB.healthRecords[id]) DB.healthRecords[id].status=st; }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Statut → ' + st); go('wpatients');
-}
-
-function modalAddVitals(id, isTemp) {
-  modal('<div class="modal-t">💓 Constantes Vitales</div><div class="row"><div class="fg"><label>Tension</label><input id="vBp" placeholder="12/8"></div><div class="fg"><label>Pouls (bpm)</label><input id="vHr" type="number" placeholder="75"></div></div><div class="row"><div class="fg"><label>Température (°C)</label><input id="vTemp" placeholder="37.2"></div><div class="fg"><label>SpO2 (%)</label><input id="vSpo2" type="number" placeholder="98"></div></div><div class="row"><div class="fg"><label>Douleur (0-10)</label><input id="vPain" type="number" min="0" max="10" placeholder="0"></div><div class="fg"><label>Glasgow (3-15)</label><input id="vGlasgow" type="number" min="3" max="15" placeholder="15"></div></div><div class="fg"><label>Observations</label><input id="vObs" placeholder="État général..."></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddVitals(\'' + id + '\',' + isTemp + ')">Enregistrer</button></div>');
-}
-function doAddVitals(id, isTemp) {
-  var e = { date:new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), by:DB.user.name, bp:document.getElementById('vBp').value||'—', hr:document.getElementById('vHr').value||'—', temp:document.getElementById('vTemp').value||'—', spo2:document.getElementById('vSpo2').value||'—', pain:document.getElementById('vPain').value||'—', glasgow:document.getElementById('vGlasgow').value||'—', obs:document.getElementById('vObs').value||'' };
-  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.vitals)p.vitals=[]; p.vitals.unshift(e); } else { var r=DB.healthRecords[id]; if(!r.vitals)r.vitals=[]; r.vitals.unshift(e); }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Constantes enregistrées'); go('wpatients');
-}
-
-function modalAddTreatment(id, isTemp) {
-  modal('<div class="modal-t">💊 Ajouter un Traitement</div><div class="fg"><label>Médicament</label><input id="trName" placeholder="Paracétamol, Morphine..."></div><div class="row"><div class="fg"><label>Dosage</label><input id="trDose" placeholder="500mg"></div><div class="fg"><label>Fréquence</label><input id="trFreq" placeholder="3x/jour"></div></div><div class="row"><div class="fg"><label>Début</label><input id="trStart" value="' + new Date().toLocaleDateString('fr-FR') + '"></div><div class="fg"><label>Fin (vide=en cours)</label><input id="trEnd" placeholder="JJ/MM/AAAA"></div></div><div class="fg"><label>Notes</label><input id="trNotes" placeholder="Précautions..."></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddTreatment(\'' + id + '\',' + isTemp + ')">Ajouter</button></div>');
-}
-function doAddTreatment(id, isTemp) {
-  var t = { name:document.getElementById('trName').value||'Traitement', dosage:document.getElementById('trDose').value, frequency:document.getElementById('trFreq').value, start:document.getElementById('trStart').value, end:document.getElementById('trEnd').value, doctor:DB.user.name, notes:document.getElementById('trNotes').value };
-  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.treatments)p.treatments=[]; p.treatments.push(t); } else { var r=DB.healthRecords[id]; if(!r.treatments)r.treatments=[]; r.treatments.push(t); }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Traitement ajouté'); go('wpatients');
-}
-
-function modalAddPrescription(id, isTemp) {
-  modal('<div class="modal-t">📝 Ordonnance</div><div class="fg"><label>Contenu</label><textarea id="prContent" rows="6" placeholder="— Paracétamol 1g 3x/jour 5j\n— Repos 48h"></textarea></div><div class="fg"><label>Notes</label><input id="prNotes" placeholder="Instructions..."></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddPrescription(\'' + id + '\',' + isTemp + ')">Enregistrer</button></div>');
-}
-function doAddPrescription(id, isTemp) {
-  var p = { date:new Date().toLocaleDateString('fr-FR'), doctor:DB.user.name, content:document.getElementById('prContent').value, notes:document.getElementById('prNotes').value };
-  if (isTemp) { var tp=DB.tempPatients[parseInt(id)]; if(!tp.prescriptions)tp.prescriptions=[]; tp.prescriptions.unshift(p); } else { var r=DB.healthRecords[id]; if(!r.prescriptions)r.prescriptions=[]; r.prescriptions.unshift(p); }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Ordonnance enregistrée'); go('wpatients');
-}
-
-function modalAddAntecedent(id, isTemp) {
-  modal('<div class="modal-t">📂 Antécédent</div><div class="row"><div class="fg"><label>Type</label><select id="antType"><option>Chirurgie</option><option>Maladie</option><option>Hospitalisation</option><option>Accident</option><option>Fracture</option><option>Autre</option></select></div><div class="fg"><label>Date</label><input id="antDate" placeholder="2024..."></div></div><div class="fg"><label>Titre</label><input id="antTitle" placeholder="Appendicectomie..."></div><div class="fg"><label>Notes</label><textarea id="antNotes" rows="2" placeholder="Détails..."></textarea></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddAntecedent(\'' + id + '\',' + isTemp + ')">Ajouter</button></div>');
-}
-function doAddAntecedent(id, isTemp) {
-  var a = { type:document.getElementById('antType').value, title:document.getElementById('antTitle').value||'Antécédent', date:document.getElementById('antDate').value, notes:document.getElementById('antNotes').value };
-  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.antecedents)p.antecedents=[]; p.antecedents.push(a); } else { var r=DB.healthRecords[id]; if(!r.antecedents)r.antecedents=[]; r.antecedents.push(a); }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Antécédent ajouté'); go('wpatients');
-}
-
-function modalAddInternalNote(id, isTemp) {
-  modal('<div class="modal-t" style="color:var(--red)">🔒 Note Interne SAMS</div><p style="font-size:.78rem;color:var(--t3);margin-bottom:.6rem">Visible uniquement par le SAMS.</p><div class="fg"><label>Note</label><textarea id="inNote" rows="4" placeholder="Observations..."></textarea></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-red" onclick="doAddInternalNote(\'' + id + '\',' + isTemp + ')">Enregistrer</button></div>');
-}
-function doAddInternalNote(id, isTemp) {
-  var n = { date:new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), author:DB.user.name, text:document.getElementById('inNote').value };
-  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(!p.notes_internes)p.notes_internes=[]; p.notes_internes.unshift(n); } else { var r=DB.healthRecords[id]; if(!r.notes_internes)r.notes_internes=[]; r.notes_internes.unshift(n); }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Note enregistrée'); go('wpatients');
+  const p = DB.tempPatients[tmpIdx];
+  const cid = document.getElementById('linkCit').value;
+  if (!DB.healthRecords[cid]) DB.healthRecords[cid] = { blood:'?', allergies:'Non renseigné', height:'?', weight:'?', emergency:'Non renseigné', conditions:'Aucune connue', history:[] };
+  // Transfer history
+  p.history.forEach(h => DB.healthRecords[cid].history.unshift(h));
+  DB.tempPatients.splice(tmpIdx, 1);
+  const cit = DB.citizens.find(c=>c.id===cid);
+  closeModal(); toast('Dossier transféré vers ' + (cit?cit.name:cid));
+  DB._patientView = 'cit:' + cid;
+  go('wpatients');
 }
 
 function modalAddSoin(id, isTemp) {
-  modal('<div class="modal-t">💉 Ajouter un Soin</div><div class="row"><div class="fg"><label>Type</label><select id="sType"><option>Consultation</option><option>Soins</option><option>Opération</option><option>Analyse</option><option>Urgence</option><option>Vaccination</option><option>Rééducation</option><option>Transport sanitaire</option><option>Réanimation</option></select></div><div class="fg"><label>Gravité</label><select id="sSeverity"><option value="">—</option><option>Mineur</option><option>Modéré</option><option>Grave</option><option>Critique</option></select></div></div><div class="fg"><label>Diagnostic</label><input id="sTitle" placeholder="Fracture, Blessure par balle..."></div><div class="row"><div class="fg"><label>Médecin</label><input id="sDoc" value="' + DB.user.name + '"></div><div class="fg"><label>Lieu</label><input id="sLoc" placeholder="Pillbox Hill..."></div></div><div class="fg"><label>Notes / Traitement</label><textarea id="sNotes" rows="3" placeholder="Détails..."></textarea></div><div class="fg"><label>Prescription (optionnel)</label><input id="sPrescription" placeholder="Paracétamol 1g 3x/j 5j"></div><div class="fg"><label>Suivi prévu</label><input id="sFollowup" placeholder="Contrôle dans 1 semaine"></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddSoin(\'' + id + '\',' + isTemp + ')">Enregistrer</button></div>');
+  const types = ['Consultation','Soins','Opération','Analyse','Urgence','Vaccination','Rééducation'].map(t=>`<option>${t}</option>`).join('');
+  const badges = {'Consultation':'b-green','Soins':'b-red','Opération':'b-purple','Analyse':'b-blue','Urgence':'b-orange','Vaccination':'b-cyan','Rééducation':'b-gold'};
+  modal(`<div class="modal-t">💉 Ajouter un Soin</div>
+    <div class="row"><div class="fg"><label>Type</label><select id="sType">${types}</select></div><div class="fg"><label>Docteur</label><input id="sDoc" value="${DB.user.name}"></div></div>
+    <div class="fg"><label>Titre / Diagnostic</label><input id="sTitle" placeholder="Ex: Fracture du bras droit"></div>
+    <div class="fg"><label>Notes / Traitement</label><textarea id="sNotes" placeholder="Détail des soins, prescriptions..."></textarea></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="doAddSoin('${id}',${isTemp})">Enregistrer</button></div>`);
 }
+
 function doAddSoin(id, isTemp) {
-  var type = document.getElementById('sType').value;
-  var badges = {'Consultation':'b-green','Soins':'b-red','Opération':'b-purple','Analyse':'b-blue','Urgence':'b-orange','Vaccination':'b-cyan','Rééducation':'b-gold','Transport sanitaire':'b-orange','Réanimation':'b-red'};
-  var entry = { date:new Date().toLocaleDateString('fr-FR'), type:type, title:document.getElementById('sTitle').value||'Soin', doctor:document.getElementById('sDoc').value||DB.user.name, notes:document.getElementById('sNotes').value||'—', severity:document.getElementById('sSeverity').value, location:document.getElementById('sLoc').value, prescription:document.getElementById('sPrescription').value, followup:document.getElementById('sFollowup').value, badge:badges[type]||'b-blue' };
-  if (isTemp) { var p=DB.tempPatients[parseInt(id)]; if(p)(p.history||[]).unshift(entry); } else { if(DB.healthRecords[id]) DB.healthRecords[id].history.unshift(entry); }
-  markDirty('health_records','temp_patients'); closeModal(); toast('Soin enregistré'); go('wpatients');
+  const type = document.getElementById('sType').value;
+  const title = document.getElementById('sTitle').value || 'Soin';
+  const doctor = document.getElementById('sDoc').value || DB.user.name;
+  const notes = document.getElementById('sNotes').value || '—';
+  const badges = {'Consultation':'b-green','Soins':'b-red','Opération':'b-purple','Analyse':'b-blue','Urgence':'b-orange','Vaccination':'b-cyan','Rééducation':'b-gold'};
+  const entry = { date: new Date().toLocaleDateString('fr-FR'), type, title, doctor, notes, badge: badges[type]||'b-blue' };
+
+  if (isTemp) {
+    const p = DB.tempPatients[parseInt(id)];
+    if (p) p.history.unshift(entry);
+  } else {
+    if (DB.healthRecords[id]) DB.healthRecords[id].history.unshift(entry);
+  }
+  closeModal(); toast('Soin enregistré'); go('wpatients');
 }
 
 function modalEditMedProfile(citizenId) {
-  var r = DB.healthRecords[citizenId]; if (!r) return;
-  var bOpts = ['O+','O-','A+','A-','B+','B-','AB+','AB-','?'].map(function(b){return '<option'+(r.blood===b?' selected':'')+'>'+b+'</option>';}).join('');
-  var sOpts = ['Homme','Femme','Autre','Non renseigné'].map(function(s){return '<option'+(r.sex===s?' selected':'')+'>'+s+'</option>';}).join('');
-  modal('<div class="modal-t">✏️ Profil Médical</div><div class="row"><div class="fg"><label>Groupe sanguin</label><select id="epBlood">' + bOpts + '</select></div><div class="fg"><label>Sexe</label><select id="epSex">' + sOpts + '</select></div></div><div class="row"><div class="fg"><label>Date de naissance</label><input id="epDob" value="' + (r.dob||'') + '" placeholder="JJ/MM/AAAA"></div><div class="fg"><label>N° Sécu</label><input id="epSsn" value="' + (r.ssn||'') + '"></div></div><div class="row"><div class="fg"><label>Taille</label><input id="epHeight" value="' + (r.height||'') + '"></div><div class="fg"><label>Poids</label><input id="epWeight" value="' + (r.weight||'') + '"></div></div><div class="fg"><label>Allergies</label><input id="epAllerg" value="' + (r.allergies||'') + '"></div><div class="fg"><label>Pathologies</label><input id="epCond" value="' + (r.conditions||'') + '"></div><div class="fg"><label>Contact urgence</label><input id="epEmerg" value="' + (r.emergency||'') + '"></div><div class="fg"><label>Assurance</label><input id="epInsurance" value="' + (r.insurance||'') + '"></div><div class="fg"><label>Adresse</label><input id="epAddress" value="' + (r.address||'') + '"></div><div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="doSaveMedProfile(\'' + citizenId + '\')">Sauvegarder</button></div>');
+  const rec = DB.healthRecords[citizenId];
+  if (!rec) return;
+  modal(`<div class="modal-t">✏️ Modifier le Profil Médical</div>
+    <div class="row"><div class="fg"><label>Groupe sanguin</label><select id="epBlood"><option ${rec.blood==='O+'?'selected':''}>O+</option><option ${rec.blood==='O-'?'selected':''}>O-</option><option ${rec.blood==='A+'?'selected':''}>A+</option><option ${rec.blood==='A-'?'selected':''}>A-</option><option ${rec.blood==='B+'?'selected':''}>B+</option><option ${rec.blood==='B-'?'selected':''}>B-</option><option ${rec.blood==='AB+'?'selected':''}>AB+</option><option ${rec.blood==='AB-'?'selected':''}>AB-</option><option ${rec.blood==='?'?'selected':''}>?</option></select></div><div class="fg"><label>Allergies</label><input id="epAllerg" value="${rec.allergies}"></div></div>
+    <div class="row"><div class="fg"><label>Taille</label><input id="epHeight" value="${rec.height}"></div><div class="fg"><label>Poids</label><input id="epWeight" value="${rec.weight}"></div></div>
+    <div class="fg"><label>Contact d'urgence</label><input id="epEmerg" value="${rec.emergency}"></div>
+    <div class="fg"><label>Pathologies / Conditions</label><input id="epCond" value="${rec.conditions}"></div>
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const r=DB.healthRecords['${citizenId}'];r.blood=document.getElementById('epBlood').value;r.allergies=document.getElementById('epAllerg').value;r.height=document.getElementById('epHeight').value;r.weight=document.getElementById('epWeight').value;r.emergency=document.getElementById('epEmerg').value;r.conditions=document.getElementById('epCond').value;closeModal();toast('Profil mis à jour');go('wpatients')">Sauvegarder</button></div>`);
 }
-function doSaveMedProfile(citizenId) {
-  var r = DB.healthRecords[citizenId];
-  r.blood=document.getElementById('epBlood').value; r.sex=document.getElementById('epSex').value;
-  r.dob=document.getElementById('epDob').value; r.ssn=document.getElementById('epSsn').value;
-  r.height=document.getElementById('epHeight').value; r.weight=document.getElementById('epWeight').value;
-  r.allergies=document.getElementById('epAllerg').value; r.conditions=document.getElementById('epCond').value;
-  r.emergency=document.getElementById('epEmerg').value; r.insurance=document.getElementById('epInsurance').value;
-  r.address=document.getElementById('epAddress').value;
-  markDirty('health_records'); closeModal(); toast('Profil mis à jour'); go('wpatients');
-}
-
 
 // ============ WORK: STOCK ============
 function pWStock() {
@@ -3184,7 +2570,7 @@ function pWStock() {
       <td><div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-green" onclick="modalRestockItem(${i})" title="Réappro">📦</button>
         <button class="btn btn-sm btn-outline" onclick="modalEditStock(${i})" title="Modifier">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${s.name}'+' du stock ?',function(){DB.job.stock.splice(${i},1);markDirty('enterprise_data');toast('Article supprimé');go('wstock')})" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${s.name}'+' du stock ?',function(){DB.job.stock.splice(${i},1);toast('Article supprimé');go('wstock')})" style="padding:.2rem .4rem">✕</button>
       </div></td>
     </tr>`;
   });
@@ -3198,7 +2584,7 @@ function modalAddStock() {
     <div class="row"><div class="fg"><label>Quantité</label><input type="number" id="asQty" value="0"></div><div class="fg"><label>Unité</label><input id="asUnit" placeholder="pcs, L, kg"></div></div>
     <div class="row"><div class="fg"><label>Seuil d'alerte</label><input type="number" id="asMin" value="10"></div><div class="fg"><label>Catégorie</label><input id="asCat" placeholder="Ex: Mécanique"></div></div>
     <div class="fg"><label>📝 Notes</label><input id="asNotes" placeholder="Fournisseur, remarques, infos..."></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.job.stock.push({id:Date.now(),name:document.getElementById('asName').value||'Nouveau',qty:parseInt(document.getElementById('asQty').value)||0,unit:document.getElementById('asUnit').value||'pcs',min:parseInt(document.getElementById('asMin').value)||10,cat:document.getElementById('asCat').value||'Autre',emoji:document.getElementById('asEmoji').value||'📦',notes:document.getElementById('asNotes').value||''});closeModal();markDirty('enterprise_data');toast('Article ajouté');go('wstock')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.job.stock.push({id:Date.now(),name:document.getElementById('asName').value||'Nouveau',qty:parseInt(document.getElementById('asQty').value)||0,unit:document.getElementById('asUnit').value||'pcs',min:parseInt(document.getElementById('asMin').value)||10,cat:document.getElementById('asCat').value||'Autre',emoji:document.getElementById('asEmoji').value||'📦',notes:document.getElementById('asNotes').value||''});closeModal();toast('Article ajouté');go('wstock')">Ajouter</button></div>`);
 }
 
 function modalEditStock(idx) {
@@ -3208,7 +2594,7 @@ function modalEditStock(idx) {
     <div class="row"><div class="fg"><label>Quantité</label><input type="number" id="esQty" value="${s.qty}"></div><div class="fg"><label>Unité</label><input id="esUnit" value="${s.unit}"></div></div>
     <div class="row"><div class="fg"><label>Seuil d'alerte</label><input type="number" id="esMin" value="${s.min}"></div><div class="fg"><label>Catégorie</label><input id="esCat" value="${s.cat}"></div></div>
     <div class="fg"><label>📝 Notes</label><input id="esNotes" value="${s.notes||''}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const s=DB.job.stock[${idx}];s.name=document.getElementById('esName').value;s.emoji=document.getElementById('esEmoji').value;s.qty=parseInt(document.getElementById('esQty').value)||0;s.unit=document.getElementById('esUnit').value;s.min=parseInt(document.getElementById('esMin').value)||0;s.cat=document.getElementById('esCat').value;s.notes=document.getElementById('esNotes').value;markDirty('enterprise_data');closeModal();toast('Stock mis à jour');go('wstock')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const s=DB.job.stock[${idx}];s.name=document.getElementById('esName').value;s.emoji=document.getElementById('esEmoji').value;s.qty=parseInt(document.getElementById('esQty').value)||0;s.unit=document.getElementById('esUnit').value;s.min=parseInt(document.getElementById('esMin').value)||0;s.cat=document.getElementById('esCat').value;s.notes=document.getElementById('esNotes').value;closeModal();toast('Stock mis à jour');go('wstock')">Sauvegarder</button></div>`);
 }
 
 function modalRestockItem(idx) {
@@ -3216,7 +2602,7 @@ function modalRestockItem(idx) {
   modal(`<div class="modal-t">📦 Réapprovisionner — ${s.emoji} ${s.name}</div>
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.85rem">Stock actuel: <strong class="mono" style="color:${s.qty<s.min?'var(--red)':'var(--green)'}">${s.qty} ${s.unit}</strong> — Seuil: ${s.min}</div>
     <div class="fg"><label>Quantité à ajouter</label><input type="number" id="rsQty" placeholder="0"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const q=parseInt(document.getElementById('rsQty').value)||0;DB.job.stock[${idx}].qty+= q;markDirty('enterprise_data');closeModal();toast('+'+q+' ${s.unit} ajouté(s)');go('wstock')">Réapprovisionner</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const q=parseInt(document.getElementById('rsQty').value)||0;DB.job.stock[${idx}].qty+= q;closeModal();toast('+'+q+' ${s.unit} ajouté(s)');go('wstock')">Réapprovisionner</button></div>`);
 }
 
 // ============ WORK: ARTICLES CAISSE ============
@@ -3225,13 +2611,13 @@ function pWArticles() {
   const items = DB.job.pos;
 
   let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
-    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏷️ Articles de la Caisse</h1><p style="color:var(--t2);font-size:.82rem">${items.length} articles — ${DB.job.tvaEnabled!==false?'TVA '+DB.taxConfig.tva+'%':'TVA exonérée'}</p></div>
+    <div><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">🏷️ Articles de la Caisse</h1><p style="color:var(--t2);font-size:.82rem">${items.length} articles — TVA ${DB.taxConfig.tva}%</p></div>
     <button class="btn btn-sm btn-blue" onclick="modalAddArticle2()">+ Nouvel Article</button>
   </div>`;
 
   h += '<div class="card"><table><thead><tr><th></th><th>Article</th><th>Prix HT</th><th>Prix TTC</th><th>Actions</th></tr></thead><tbody>';
   items.forEach((it,i) => {
-    const ttc = DB.job.tvaEnabled!==false ? it.price + Math.round(it.price * DB.taxConfig.tva / 100) : it.price;
+    const ttc = it.price + Math.round(it.price * DB.taxConfig.tva / 100);
     h += `<tr>
       <td style="font-size:1.3rem">${it.emoji}</td>
       <td style="font-weight:600">${it.name}</td>
@@ -3239,7 +2625,7 @@ function pWArticles() {
       <td class="mono" style="color:var(--gold)">$${ttc}</td>
       <td><div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-outline" onclick="modalEditArticle2(${i})">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${it.name}'+' ?',function(){DB.job.pos.splice(${i},1);markDirty('enterprise_data');toast('Article supprimé');go('warticles')})" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${it.name}'+' ?',function(){DB.job.pos.splice(${i},1);toast('Article supprimé');go('warticles')})" style="padding:.2rem .4rem">✕</button>
       </div></td>
     </tr>`;
   });
@@ -3256,7 +2642,7 @@ function modalAddArticle2() {
   modal(`<div class="modal-t">🏷️ Nouvel Article</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="a2Name" placeholder="Ex: Course Express"></div><div class="fg"><label>Emoji</label><input id="a2Emoji" value="🏷️" style="width:60px"></div></div>
     <div class="fg"><label>Prix ($)</label><input type="number" id="a2Price" placeholder="0"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('a2Name').value,p=parseInt(document.getElementById('a2Price').value);if(!n||!p){err('Nom et prix requis');return}DB.job.pos.push({name:n,price:p,emoji:document.getElementById('a2Emoji').value||'🏷️'});closeModal();markDirty('enterprise_data');toast(n+' ajouté à la caisse');go('warticles')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('a2Name').value,p=parseInt(document.getElementById('a2Price').value);if(!n||!p){err('Nom et prix requis');return}DB.job.pos.push({name:n,price:p,emoji:document.getElementById('a2Emoji').value||'🏷️'});closeModal();toast(n+' ajouté à la caisse');go('warticles')">Ajouter</button></div>`);
 }
 
 function modalEditArticle2(idx) {
@@ -3264,12 +2650,12 @@ function modalEditArticle2(idx) {
   modal(`<div class="modal-t">✏️ Modifier — ${it.name}</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="e2Name" value="${it.name}"></div><div class="fg"><label>Emoji</label><input id="e2Emoji" value="${it.emoji}" style="width:60px"></div></div>
     <div class="fg"><label>Prix ($)</label><input type="number" id="e2Price" value="${it.price}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const it=DB.job.pos[${idx}];it.name=document.getElementById('e2Name').value;it.emoji=document.getElementById('e2Emoji').value;it.price=parseInt(document.getElementById('e2Price').value)||0;closeModal();markDirty('enterprise_data');toast('Article mis à jour');go('warticles')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const it=DB.job.pos[${idx}];it.name=document.getElementById('e2Name').value;it.emoji=document.getElementById('e2Emoji').value;it.price=parseInt(document.getElementById('e2Price').value)||0;closeModal();toast('Article mis à jour');go('warticles')">Sauvegarder</button></div>`);
 }
 
 // ============ WORK: TEAM ============
 // ============ SERVICE LOG ============
-function toggleService() { /* save after toggle */ 
+function toggleService() {
   if (!DB.job) return;
   if (!DB.job.serviceLog) DB.job.serviceLog = [];
   const now = new Date();
@@ -3400,7 +2786,6 @@ function doHire() {
   // Update gov enterprise employee count
   const ent = DB.enterprises.find(e=>e.name===DB.job.company);
   if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
-  markDirty('enterprise_data','citizens','enterprises');
   closeModal(); toast(c.name + ' embauché !'); go('wteam');
 }
 function fireEmployee(empId, empName) {
@@ -3418,7 +2803,6 @@ function doFire(empId, empName) {
   // Update enterprise employee count in gov
   const ent = DB.enterprises.find(e=>e.name===DB.job.company);
   if (ent) ent.employees = DB.job.employees.filter(e=>e.status==='active').length;
-  markDirty('enterprise_data','citizens','enterprises');
   closeModal();
   toast(empName + ' a été révoqué');
   go('wteam');
@@ -3428,7 +2812,7 @@ function modalPromote(empId) {
   const opts = DB.job.grades.map((g,i)=>`<option value="${i}" ${i===e.grade?'selected':''}>${g.name} (${g.commission}%)</option>`).join('');
   modal(`<div class="modal-t">⬆ Changer le grade de ${e.name}</div>
     <div class="fg"><label>Nouveau grade</label><select id="pGrade">${opts}</select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="e=DB.job.employees.find(x=>x.id==='${empId}');e.grade=parseInt(document.getElementById('pGrade').value);markDirty('enterprise_data');closeModal();toast(e.name+' → '+DB.job.grades[e.grade].name);go('wteam')">Appliquer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="e=DB.job.employees.find(x=>x.id==='${empId}');e.grade=parseInt(document.getElementById('pGrade').value);closeModal();toast(e.name+' → '+DB.job.grades[e.grade].name);go('wteam')">Appliquer</button></div>`);
 }
 
 // ============ WORK: GRADES ============
@@ -3474,7 +2858,7 @@ function modalNewGrade() {
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ngArticles"> Gérer les articles (caisse)</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="ngPatients"> Dossiers patients (EMS)</label>
     </div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ngName').value||'Nouveau';DB.job.grades.push({name:n,payType:document.getElementById('ngPayType').value,fixe:parseInt(document.getElementById('ngFixe').value)||0,commission:parseInt(document.getElementById('ngComm').value)||0,prime:parseInt(document.getElementById('ngPrime').value)||0,canManage:document.getElementById('ngManage').checked,canHire:document.getElementById('ngHire').checked,canFire:document.getElementById('ngFire').checked,canEditGrades:false,canStock:document.getElementById('ngStock').checked,canArticles:document.getElementById('ngArticles').checked,canPatients:document.getElementById('ngPatients').checked,canPOS:document.getElementById('ngPOS').checked});markDirty('enterprise_data');closeModal();toast('Grade «'+n+'» créé');go('wgrades')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ngName').value||'Nouveau';DB.job.grades.push({name:n,payType:document.getElementById('ngPayType').value,fixe:parseInt(document.getElementById('ngFixe').value)||0,commission:parseInt(document.getElementById('ngComm').value)||0,prime:parseInt(document.getElementById('ngPrime').value)||0,canManage:document.getElementById('ngManage').checked,canHire:document.getElementById('ngHire').checked,canFire:document.getElementById('ngFire').checked,canEditGrades:false,canStock:document.getElementById('ngStock').checked,canArticles:document.getElementById('ngArticles').checked,canPatients:document.getElementById('ngPatients').checked,canPOS:document.getElementById('ngPOS').checked});closeModal();toast('Grade «'+n+'» créé');go('wgrades')">Créer</button></div>`);
 }
 function modalEditGrade(idx) {
   const g = DB.job.grades[idx];
@@ -3493,7 +2877,7 @@ function modalEditGrade(idx) {
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egArticles" ${g.canArticles?'checked':''}> Gérer les articles</label>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.83rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="egPatients" ${g.canPatients?'checked':''}> Dossiers patients (EMS)</label>
     </div>
-    <div class="modal-acts">${idx>0?`<button class="btn btn-sm btn-red" onclick="markDirty('enterprise_data');DB.job.grades.splice(${idx},1);DB.job.employees.forEach(e=>{if(e.grade>=${idx})e.grade=Math.max(0,e.grade-1)});closeModal();toast('Grade supprimé');go('wgrades')">Supprimer</button>`:''}<button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveGradeEdit(${idx})">Sauvegarder</button></div>`);
+    <div class="modal-acts">${idx>0?`<button class="btn btn-sm btn-red" onclick="DB.job.grades.splice(${idx},1);DB.job.employees.forEach(e=>{if(e.grade>=${idx})e.grade=Math.max(0,e.grade-1)});closeModal();toast('Grade supprimé');go('wgrades')">Supprimer</button>`:''}<button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="saveGradeEdit(${idx})">Sauvegarder</button></div>`);
 }
 function saveGradeEdit(idx) {
   var g = DB.job.grades[idx];
@@ -3512,7 +2896,6 @@ function saveGradeEdit(idx) {
   g.canPOS = document.getElementById('egPOS').checked;
   // Update current user's permissions if editing own grade
   if (idx === DB.job.gradeIndex) DB.job.role = g.name;
-  markDirty('enterprise_data');
   closeModal(); toast('Grade «' + g.name + '» mis à jour'); buildNav(); go('wgrades');
 }
 
@@ -3521,7 +2904,6 @@ function saveGradeEdit(idx) {
 function pWInfo() {
   if (!DB.job) return '';
   var j = DB.job;
-  if (j.tvaEnabled === undefined) j.tvaEnabled = true;
   if (!j.info) j.info = {rib:'', iban:'', bic:'', siret:'', address:'', phone:'', email:'', notes:''};
   var inf = j.info;
   var h = '<div style="margin-bottom:1rem"><h1 style="font-family:Rajdhani,sans-serif;font-size:1.5rem;font-weight:700">\u{1F3E6} Infos Entreprise</h1><p style="color:var(--t2);font-size:.82rem">' + j.icon + ' ' + j.company + '</p></div>';
@@ -3550,17 +2932,7 @@ function pWInfo() {
   else h += '<p style="color:var(--t3);font-size:.83rem">Aucune note. Cliquez Modifier pour ajouter des informations.</p>';
   h += '</div>';
 
-  
-  // TVA toggle
-  h += '<div class="card" style="border-color:rgba(240,180,41,.2)"><div class="card-t">💰 TVA — Taxe sur la Valeur Ajoutée</div>';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .7rem;background:var(--input);border-radius:8px">';
-  h += '<div><div style="font-weight:600;font-size:.88rem">TVA sur les ventes</div><div style="font-size:.75rem;color:var(--t3)">Taux actuel: ' + DB.taxConfig.tva + '% — Appliqué sur chaque facture en caisse</div></div>';
-  h += '<div style="display:flex;align-items:center;gap:.6rem">';
-  h += '<span style="font-size:.82rem;font-weight:600;color:' + (j.tvaEnabled!==false ? 'var(--green)' : 'var(--red)') + '">' + (j.tvaEnabled!==false ? 'Activée' : 'Désactivée') + '</span>';
-  h += '<div onclick="DB.job.tvaEnabled=!DB.job.tvaEnabled;markDirty(\'enterprise_data\');go(\'winfo\')" style="cursor:pointer;width:44px;height:24px;border-radius:12px;background:' + (j.tvaEnabled!==false ? 'var(--green)' : 'var(--t3)') + ';position:relative;transition:background .2s"><div style="position:absolute;top:2px;' + (j.tvaEnabled!==false ? 'left:22px' : 'left:2px') + ';width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></div></div>';
-  h += '</div></div></div>';
-
-return h;
+  return h;
 }
 function modalEditEntInfo() {
   var inf = DB.job.info || {rib:'',iban:'',bic:'',siret:'',address:'',phone:'',email:'',notes:''};
@@ -3604,7 +2976,7 @@ function pWApps() {
           <select id="appGrade${i}" style="width:auto;font-size:.8rem;padding:.3rem .5rem">${gradeOpts}</select>
           <div style="display:flex;gap:.3rem">
             <button class="btn btn-sm btn-green" onclick="acceptApp(${i})">✓ Accepter</button>
-            <button class="btn btn-sm btn-red" onclick="DB.job.pendingApps.splice(${i},1);markDirty('enterprise_data');toast('Candidature refusée');go('wapps')">✕ Refuser</button>
+            <button class="btn btn-sm btn-red" onclick="DB.job.pendingApps.splice(${i},1);toast('Candidature refusée');go('wapps')">✕ Refuser</button>
           </div>
         </div>
       </div></div>`;
@@ -3642,7 +3014,7 @@ function doGovLogin() {
   if (!DB.govAccounts || !DB.govAccounts.length) {
     if (!name) { err('Nom requis pour créer le premier compte.'); return; }
     DB.govAccounts = [{id: id, name: name, code: code}];
-    markDirty('gov_accounts');
+    saveDB();
     toast('Compte gouvernement créé : ' + id);
   }
   // Check against stored gov accounts
@@ -3650,7 +3022,7 @@ function doGovLogin() {
   if (!account) { err('Code d\'accès incorrect.'); return; }
   DB.govUser = { id: account.id, name: name || account.name };
   localStorage.setItem('sa_session', JSON.stringify({type:'gov', id:account.id, name:name||account.name}));
-  _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+  _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
   document.getElementById('auth').classList.add('hide');
   document.getElementById('govApp').classList.add('on');
   document.getElementById('gAv').textContent = (name||account.name).split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
@@ -3682,7 +3054,7 @@ function doChangeGovPass() {
   account.code = newCode;
   closeModal();
   toast('Code d\'accès modifié avec succès');
-  markDirty('gov_accounts');
+  saveDB();
 }
 function modalGovAnnouncement() {
   modal(`<div class="modal-t">📣 Annonce Gouvernementale</div>
@@ -3729,7 +3101,7 @@ function buildGovNav() {
   });
 }
 function goGov(p) {
-  flushDirty();
+  saveDB();
   document.querySelectorAll('#gNav .nav-i').forEach(el=>el.classList.toggle('on',el.dataset.p===p));
   const c=document.getElementById('gPage');
   const T={gdash:'Panneau de Contrôle',gcit:'Registre des Citoyens',gent:'Gestion des Entreprises',gjobs:'Offres d\'Emploi',gtax:'Configuration Fiscale',gbudget:'Budget de l\'État',gdecree:'Décrets & Annonces',gcodes:'Gestion des Codes & Lois',gdefcon:'Sécurité — DEFCON',gvault:'Coffre-Fort Sécurisé',gvotes:'Lois & Votes Citoyens'};
@@ -3823,7 +3195,6 @@ function removeFromJob(citizenId) {
     const ent2 = DB.enterprises.find(function(e){return e.name===c.job});
     if (ent2 && DB.allJobs[c.job]) ent2.employees = DB.allJobs[c.job].employees.filter(function(e){return e.status==='active'}).length;
     c.job = null; c.role = null;
-    markDirty('citizens','enterprise_data','enterprises');
     toast(c.name + ' retiré de son emploi');
     goGov('gcit');
   });
@@ -3854,10 +3225,6 @@ function deleteCitizen(citizenId, citizenName) {
     // Remove citizen
     var idx = DB.citizens.findIndex(function(x){return x.id===citizenId});
     if (idx > -1) DB.citizens.splice(idx, 1);
-    dbDelete('citizens','id',citizenId);
-    dbDelete('health_records','citizen_id',citizenId);
-    dbDelete('citizen_salaries','citizen_id',citizenId);
-    markDirty('citizens','enterprise_data','enterprises','messages','health_records','citizen_salaries');
     toast(citizenName + ' supprimé définitivement');
     goGov('gcit');
   });
@@ -3883,7 +3250,6 @@ function doAssignPatron(citizenId, citizenName, citizenPhone) {
   const existing = jobData.employees.find(e=>e.id===citizenId);
   if (existing) { existing.grade = 0; existing.status = 'active'; }
   else { jobData.employees.push({id:citizenId, name:citizenName, grade:0, phone:citizenPhone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
-  markDirty('enterprises','enterprise_data','citizens');
   closeModal();
   toast(citizenName + ' nommé Patron de ' + ent.name);
   goGov('gcit');
@@ -3893,7 +3259,7 @@ function modalResetPass(citizenId) {
   modal(`<div class="modal-t">🔑 Réinitialiser le Mot de Passe</div>
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.83rem">Citoyen: <strong>${c.name}</strong> <span class="mono" style="color:var(--t3)">${c.id}</span></div>
     <div class="fg"><label>Nouveau mot de passe</label><input id="rpPass" type="text" placeholder="Nouveau MDP"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const p=document.getElementById('rpPass').value;if(!p||p.length<3){err('Min 3 caractères');return}DB.citizens.find(x=>x.id==='${c.id}').pass=p;markDirty('citizens');closeModal();toast('MDP de ${c.name} réinitialisé')">Réinitialiser</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const p=document.getElementById('rpPass').value;if(!p||p.length<3){err('Min 3 caractères');return}DB.citizens.find(x=>x.id==='${c.id}').pass=p;closeModal();toast('MDP de ${c.name} réinitialisé')">Réinitialiser</button></div>`);
 }
 
 // ============ GOV: ENTREPRISES ============
@@ -3913,7 +3279,7 @@ function gEnt() {
         <button class="btn btn-sm btn-outline" onclick="modalEditEnt(${i})" title="Modifier">✏️</button>
         <button class="btn btn-sm btn-outline" onclick="modalChangePatron(${i})" title="Changer le patron">👔</button>
         <button class="btn btn-sm btn-outline" style="border-color:rgba(59,130,246,.3);color:var(--blue)" onclick="modalGovPostJob(${i})" title="Publier une offre">📢</button>
-        ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';markDirty('enterprises');toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';markDirty('enterprises');toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
+        ${e.status==='active'?`<button class="btn btn-sm btn-outline" style="border-color:rgba(249,115,22,.3);color:var(--orange)" onclick="DB.enterprises[${i}].status='suspended';toast('${e.name} suspendue');goGov('gent')" title="Suspendre">⏸️</button>`:`<button class="btn btn-sm btn-outline" style="border-color:rgba(34,197,94,.3);color:var(--green)" onclick="DB.enterprises[${i}].status='active';toast('${e.name} réactivée');goGov('gent')" title="Réactiver">▶</button>`}
         <button class="btn btn-sm btn-red" onclick="delEnterprise(${i})" title="Supprimer">🗑️</button>
       </div></td></tr>`;
   });
@@ -3924,7 +3290,7 @@ function modalCreateEnt() {
   const citOpts = '<option value="">— Aucun patron pour le moment —</option>' + DB.citizens.map(c => `<option value="${c.id}">${c.name} (${c.id})${c.job?' — '+c.job:''}</option>`).join('');
   modal(`<div class="modal-t">🏢 Créer une Entreprise</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="ceNom" placeholder="Nom de l'entreprise"></div><div class="fg"><label>Icône</label><input id="ceIco" placeholder="🏢" value="🏢" style="width:60px"></div></div>
-    <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Services Administratifs</option><option>Gouvernement</option><option>LSPD</option><option>SAMS</option><option>Avocat</option><option>Superette</option><option>Bar / Club</option><option>Média</option><option>Autre</option></select></div>
+    <div class="fg"><label>Type d'activité</label><select id="ceType"><option>Transport</option><option>Santé</option><option>Restauration</option><option>Mécanique</option><option>Divertissement</option><option>Immobilier</option><option>Sécurité</option><option>Autre</option></select></div>
     <div class="fg"><label>👔 Patron (optionnel)</label><select id="cePatronId">${citOpts}</select></div>
     <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="createEnt()">Créer</button></div>`);
 }
@@ -3935,17 +3301,16 @@ function createEnt() {
   const ico = document.getElementById('ceIco').value||'🏢';
   const cit = pid ? DB.citizens.find(c=>c.id===pid) : null;
   DB.enterprises.push({id:'ENT-'+String(DB.enterprises.length+1).padStart(3,'0'), name:n, icon:ico, type:document.getElementById('ceType').value, patron:cit?cit.name:'', patronId:pid||'', status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:cit?1:0});
-  createEnterpriseData(n, ico, document.getElementById('ceType').value);
+  createEnterpriseData(n, ico);
   if (cit) {
     cit.job = n; cit.role = 'Patron';
     DB.allJobs[n].employees.push({id:cit.id, name:cit.name, grade:0, phone:cit.phone, hired:new Date().toLocaleDateString('fr-FR'), status:'active'});
   }
-  markDirty('enterprises','enterprise_data','citizens');
   closeModal(); toast(n + ' créée' + (cit?' — Patron: '+cit.name:'')); goGov('gent');
 }
 function modalEditEnt(idx) {
   const e = DB.enterprises[idx];
-  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Services Administratifs','Gouvernement','LSPD','SAMS','Avocat','Superette','Bar / Club','Média','Autre'];
+  const types = ['Transport','Santé','Restauration','Mécanique','Divertissement','Immobilier','Sécurité','Autre'];
   const typeOpts = types.map(function(t){return '<option '+(t===e.type?'selected':'')+'>'+t+'</option>'}).join('');
   modal(`<div class="modal-t">✏️ Modifier — ${e.icon} ${e.name}</div>
     <div class="row"><div class="fg"><label>Nom</label><input id="eeNom" value="${e.name}"></div><div class="fg"><label>Icône</label><input id="eeIco" value="${e.icon}" style="width:60px"></div></div>
@@ -3975,7 +3340,6 @@ function saveEditEnt(idx) {
     DB.jobs.forEach(function(j) { if (j.company === oldName) { j.company = newName; j.icon = newIco; } });
   }
   if (DB.allJobs[newName]) DB.allJobs[newName].icon = newIco;
-  markDirty('enterprises','enterprise_data','citizens','jobs');
   closeModal(); toast(newName + ' mis à jour'); goGov('gent');
 }
 function delEnterprise(idx) {
@@ -3990,9 +3354,6 @@ function delEnterprise(idx) {
       delete DB.allJobs[e.name];
     }
     DB.enterprises.splice(idx, 1);
-    markDirty('enterprises','enterprise_data','citizens');
-    dbDelete('enterprise_data','enterprise_name',e.name);
-    dbDelete('enterprises','id',e.id);
     toast('Entreprise supprimée');
     goGov('gent');
   });
@@ -4039,7 +3400,6 @@ function assignPatronFromSearch(idx, citizenId) {
   var existing = jobData.employees.find(function(e){return e.id===citizenId});
   if (existing) { existing.grade = 0; existing.status = 'active'; }
   else { jobData.employees.push({id:citizenId, name:newCit.name, grade:0, phone:newCit.phone||'', hired:new Date().toLocaleDateString('fr-FR'), status:'active'}); }
-  markDirty('enterprises','enterprise_data','citizens');
   closeModal(); toast(newCit.name + ' nommé Patron de ' + ent.name); goGov('gent');
 }
 function removePatron(idx) {
@@ -4056,7 +3416,6 @@ function removePatron(idx) {
     if (oldCit.role === 'Patron') { oldCit.job = null; oldCit.role = null; }
   }
   ent.patron = ''; ent.patronId = '';
-  markDirty('enterprises','enterprise_data','citizens');
   closeModal(); toast('Patron retiré de ' + ent.name); goGov('gent');
 }
 function modalGovPostJob(entIdx) {
@@ -4070,7 +3429,7 @@ function modalGovPostJob(entIdx) {
 }
 function govPostJob(entIdx) {
   const ent = DB.enterprises[entIdx];
-  markDirty('jobs');DB.jobs.push({id:Date.now(), company:ent.name, icon:ent.icon, role:document.getElementById('gjRole').value||'Employé', salary:document.getElementById('gjSalary').value||'À définir', slots:parseInt(document.getElementById('gjSlots').value)||1, desc:document.getElementById('gjDesc').value||'Poste ouvert.', postedBy:'Gouvernement'});
+  DB.jobs.push({id:Date.now(), company:ent.name, icon:ent.icon, role:document.getElementById('gjRole').value||'Employé', salary:document.getElementById('gjSalary').value||'À définir', slots:parseInt(document.getElementById('gjSlots').value)||1, desc:document.getElementById('gjDesc').value||'Poste ouvert.', postedBy:'Gouvernement'});
   closeModal(); toast('Offre publiée pour ' + ent.name); goGov('gent');
 }
 
@@ -4091,7 +3450,7 @@ function gJobs() {
           <p style="font-size:.8rem;color:var(--t2);margin-top:.3rem">${j.desc}</p>
           <div style="font-size:.73rem;color:var(--t3);margin-top:.3rem">👥 ${j.slots} poste${j.slots>1?'s':''} — Posté par ${j.postedBy||'—'}</div>
         </div>
-        <button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);markDirty('jobs');toast('Offre supprimée');goGov('gjobs')" style="padding:.25rem .5rem">🗑️</button>
+        <button class="btn btn-sm btn-red" onclick="DB.jobs.splice(${i},1);toast('Offre supprimée');goGov('gjobs')" style="padding:.25rem .5rem">🗑️</button>
       </div></div>`;
   });
   return h;
@@ -4127,11 +3486,11 @@ function gTax() {
   const tc = DB.taxConfig;
   let h = `<div style="margin-bottom:1rem"><h1 style="font-family:'Rajdhani',sans-serif;font-size:1.5rem;font-weight:700">💰 Configuration Fiscale</h1><p style="color:var(--t2);font-size:.82rem">Modifier les taux d'imposition en vigueur</p></div>`;
   h += `<div class="card"><div class="card-t">📊 TVA — Taux actuel: <strong style="color:var(--gold)">${tc.tva}%</strong></div>
-    <div class="row" style="align-items:flex-end"><div class="fg" style="margin:0"><label>Nouveau taux TVA (%)</label><input type="number" id="newTva" value="${tc.tva}" min="0" max="30"></div><div><button class="btn btn-sm btn-blue" onclick="markDirty('tax_config');DB.taxConfig.tva=parseInt(document.getElementById('newTva').value)||5;toast('TVA mise à jour: '+DB.taxConfig.tva+'%');goGov('gtax')">Appliquer</button></div></div></div>`;
+    <div class="row" style="align-items:flex-end"><div class="fg" style="margin:0"><label>Nouveau taux TVA (%)</label><input type="number" id="newTva" value="${tc.tva}" min="0" max="30"></div><div><button class="btn btn-sm btn-blue" onclick="DB.taxConfig.tva=parseInt(document.getElementById('newTva').value)||5;toast('TVA mise à jour: '+DB.taxConfig.tva+'%');goGov('gtax')">Appliquer</button></div></div></div>`;
   h += `<div class="card"><div class="card-t">📊 Barème Progressif de l'Impôt</div>
     <table><thead><tr><th>Tranche</th><th>Bénéfice Net</th><th>Taux</th><th>Action</th></tr></thead><tbody>`;
   tc.tranches.forEach((t,i) => {
-    h += `<tr><td><span class="badge b-gold">${i+1}</span></td><td class="mono">$${t.min.toLocaleString()} — $${t.max.toLocaleString()}</td><td><input type="number" value="${t.rate}" min="0" max="100" style="width:70px;padding:.3rem .5rem;font-size:.85rem" onchange="DB.taxConfig.tranches[${i}].rate=parseInt(this.value)||0;toast('Tranche ${i+1} → '+this.value+'%')"> %</td><td>${i>0?`<button class="btn btn-sm btn-red" onclick="markDirty('tax_config');DB.taxConfig.tranches.splice(${i},1);markDirty('tax_config');toast('Tranche supprimée');goGov('gtax')">✕</button>`:''}</td></tr>`;
+    h += `<tr><td><span class="badge b-gold">${i+1}</span></td><td class="mono">$${t.min.toLocaleString()} — $${t.max.toLocaleString()}</td><td><input type="number" value="${t.rate}" min="0" max="100" style="width:70px;padding:.3rem .5rem;font-size:.85rem" onchange="DB.taxConfig.tranches[${i}].rate=parseInt(this.value)||0;toast('Tranche ${i+1} → '+this.value+'%')"> %</td><td>${i>0?`<button class="btn btn-sm btn-red" onclick="DB.taxConfig.tranches.splice(${i},1);toast('Tranche supprimée');goGov('gtax')">✕</button>`:''}</td></tr>`;
   });
   h += `</tbody></table>
     <button class="btn btn-sm btn-outline" style="margin-top:.6rem" onclick="modalAddTranche()">+ Ajouter une tranche</button></div>`;
@@ -4159,7 +3518,7 @@ function modalAddTranche() {
   modal(`<div class="modal-t">➕ Nouvelle Tranche</div>
     <div class="row"><div class="fg"><label>À partir de ($)</label><input id="atMin" type="number" value="${last.max+1}"></div><div class="fg"><label>Jusqu'à ($)</label><input id="atMax" type="number" value="${last.max+100000}"></div></div>
     <div class="fg"><label>Taux (%)</label><input id="atRate" type="number" value="${last.rate+5}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="markDirty('tax_config');DB.taxConfig.tranches.push({min:parseInt(document.getElementById('atMin').value),max:parseInt(document.getElementById('atMax').value),rate:parseInt(document.getElementById('atRate').value)});closeModal();markDirty('tax_config');toast('Tranche ajoutée');goGov('gtax')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.taxConfig.tranches.push({min:parseInt(document.getElementById('atMin').value),max:parseInt(document.getElementById('atMax').value),rate:parseInt(document.getElementById('atRate').value)});closeModal();toast('Tranche ajoutée');goGov('gtax')">Ajouter</button></div>`);
 }
 function simTax() {
   const ca=parseInt(document.getElementById('simCA').value)||0, dep=parseInt(document.getElementById('simDep').value)||0;
@@ -4193,7 +3552,7 @@ function gBudget() {
     <table><thead><tr><th>Source</th><th>Période</th><th>Montant</th><th>Détail</th><th></th></tr></thead><tbody>`;
   b.income.forEach((i,idx) => {
     h += `<tr><td style="font-weight:500">${i.type}</td><td style="font-size:.8rem">${i.date}</td><td class="mono" style="color:var(--green)">$${i.amount.toLocaleString()}</td><td style="font-size:.8rem;color:var(--t2)">${i.desc}</td>
-      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.income.splice(${idx},1);markDirty('gov_budget');toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
+      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.income.splice(${idx},1);toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
   });
   h += `</tbody></table><div style="margin-top:.5rem;text-align:right;font-size:.85rem;color:var(--green)">Total: <strong class="mono">$${totalIncome.toLocaleString()}</strong></div></div>`;
 
@@ -4202,7 +3561,7 @@ function gBudget() {
     <table><thead><tr><th>Poste</th><th>Date</th><th>Montant</th><th>Détail</th><th></th></tr></thead><tbody>`;
   b.expenses.forEach((e,idx) => {
     h += `<tr><td style="font-weight:500">${e.type}</td><td style="font-size:.8rem">${e.date}</td><td class="mono" style="color:var(--red)">$${e.amount.toLocaleString()}</td><td style="font-size:.8rem;color:var(--t2)">${e.desc}${e.beneficiary?' → '+e.beneficiary:''}</td>
-      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.expenses.splice(${idx},1);markDirty('gov_budget');toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
+      <td><button class="btn btn-sm btn-red" onclick="DB.govBudget.expenses.splice(${idx},1);toast('Supprimé');goGov('gbudget')" style="padding:.2rem .4rem">✕</button></td></tr>`;
   });
   h += `</tbody></table><div style="margin-top:.5rem;text-align:right;font-size:.85rem;color:var(--red)">Total: <strong class="mono">$${totalExpenses.toLocaleString()}</strong></div></div>`;
   h += '</div>';
@@ -4219,7 +3578,7 @@ function gBudget() {
         <div style="display:flex;gap:.3rem;align-items:center">
           <span class="mono" style="font-size:.85rem;color:var(--gold)">$${inv.spent.toLocaleString()} / $${inv.budget.toLocaleString()}</span>
           ${inv.status!=='done'?`<button class="btn btn-sm btn-outline" onclick="modalFundProject(${idx})" title="Débloquer des fonds">💰</button>`:''}
-          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer ce projet ?',function(){markDirty('gov_budget');DB.govBudget.investments.splice(${idx},1);toast('Projet supprimé');goGov('gbudget')})" style="padding:.2rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer ce projet ?',function(){DB.govBudget.investments.splice(${idx},1);toast('Projet supprimé');goGov('gbudget')})" style="padding:.2rem .4rem">✕</button>
         </div>
       </div>
       <p style="font-size:.8rem;color:var(--t2)">${inv.desc}</p>
@@ -4254,7 +3613,7 @@ function modalAddInvestment() {
     <div class="fg"><label>Nom du projet</label><input id="invName" placeholder="Ex: Construction hôpital"></div>
     <div class="row"><div class="fg"><label>Budget total ($)</label><input type="number" id="invBudget" placeholder="0"></div><div class="fg"><label>Statut initial</label><select id="invStatus"><option value="planned">Planifié</option><option value="active">En cours</option></select></div></div>
     <div class="fg"><label>Description</label><textarea id="invDesc" placeholder="Détail du projet..."></textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('invName').value;if(!n){err('Nom requis');return}DB.govBudget.investments.push({id:Date.now(),name:n,budget:parseInt(document.getElementById('invBudget').value)||0,spent:0,status:document.getElementById('invStatus').value,desc:document.getElementById('invDesc').value||'—'});closeModal();markDirty('gov_budget');toast('Projet créé');goGov('gbudget')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('invName').value;if(!n){err('Nom requis');return}DB.govBudget.investments.push({id:Date.now(),name:n,budget:parseInt(document.getElementById('invBudget').value)||0,spent:0,status:document.getElementById('invStatus').value,desc:document.getElementById('invDesc').value||'—'});closeModal();toast('Projet créé');goGov('gbudget')">Créer</button></div>`);
 }
 
 function modalFundProject(idx) {
@@ -4264,7 +3623,7 @@ function modalFundProject(idx) {
     <div style="padding:.5rem .7rem;background:var(--input);border-radius:6px;margin-bottom:.8rem;font-size:.85rem">Budget: <strong class="mono">$${inv.budget.toLocaleString()}</strong> — Dépensé: <strong class="mono" style="color:var(--blue)">$${inv.spent.toLocaleString()}</strong> — Restant: <strong class="mono" style="color:var(--green)">$${remaining.toLocaleString()}</strong></div>
     <div class="fg"><label>Montant à débloquer ($)</label><input type="number" id="fundAmt" value="${remaining}" max="${remaining}"></div>
     <div class="fg"><label style="display:flex;align-items:center;gap:.4rem;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" id="fundDone"> Marquer comme terminé</label></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const a=parseInt(document.getElementById('fundAmt').value)||0;const inv=DB.govBudget.investments[${idx}];inv.spent+=a;DB.govBudget.balance-=a;if(document.getElementById('fundDone').checked)inv.status='done';closeModal();markDirty('gov_budget');toast('$'+a.toLocaleString()+' débloqués');goGov('gbudget')">Débloquer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const a=parseInt(document.getElementById('fundAmt').value)||0;const inv=DB.govBudget.investments[${idx}];inv.spent+=a;DB.govBudget.balance-=a;if(document.getElementById('fundDone').checked)inv.status='done';closeModal();toast('$'+a.toLocaleString()+' débloqués');goGov('gbudget')">Débloquer</button></div>`);
 }
 
 // ============ GOV: DECRETS ============
@@ -4307,7 +3666,7 @@ function gCodes() {
         <td style="font-size:.78rem">${a.sanction.substring(0,40)}${a.sanction.length>40?'...':''}</td>
         <td><div style="display:flex;gap:.2rem">
           <button class="btn btn-sm btn-outline" onclick="modalEditArticle('${code.id}',${ai})">✏️</button>
-          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${a.ref}'+' ?',function(){DB.legalCodes[${ci}].articles.splice(${ai},1);markDirty('legal_codes');toast('Article supprimé');goGov('gcodes')})" style="padding:.2rem .4rem">✕</button>
+          <button class="btn btn-sm btn-red" onclick="confirmDel('Supprimer '+'${a.ref}'+' ?',function(){DB.legalCodes[${ci}].articles.splice(${ai},1);toast('Article supprimé');goGov('gcodes')})" style="padding:.2rem .4rem">✕</button>
         </div></td>
       </tr>`;
     });
@@ -4316,7 +3675,7 @@ function gCodes() {
 
   h += `<div class="card"><div class="card-t">➕ Créer un Nouveau Code</div>
     <div class="row"><div class="fg"><label>Nom du code</label><input id="ncName" placeholder="Ex: Code Maritime"></div><div class="fg"><label>Icône</label><input id="ncIcon" placeholder="⚓" style="width:60px"></div><div class="fg"><label>Couleur</label><select id="ncColor"><option value="var(--red)">Rouge</option><option value="var(--blue)">Bleu</option><option value="var(--gold)">Or</option><option value="var(--green)">Vert</option><option value="var(--purple)">Violet</option><option value="var(--orange)">Orange</option><option value="var(--cyan)">Cyan</option></select></div></div>
-    <button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ncName').value;if(!n){err('Nom requis');return}DB.legalCodes.push({id:n.toLowerCase().replace(/\\s+/g,'_'),name:n,icon:document.getElementById('ncIcon').value||'📋',color:document.getElementById('ncColor').value,articles:[]});markDirty('legal_codes');toast(n+' créé');goGov('gcodes')">Créer le Code</button>
+    <button class="btn btn-sm btn-green" onclick="const n=document.getElementById('ncName').value;if(!n){err('Nom requis');return}DB.legalCodes.push({id:n.toLowerCase().replace(/\\s+/g,'_'),name:n,icon:document.getElementById('ncIcon').value||'📋',color:document.getElementById('ncColor').value,articles:[]});toast(n+' créé');goGov('gcodes')">Créer le Code</button>
   </div>`;
   return h;
 }
@@ -4329,7 +3688,7 @@ function modalAddArticle(codeId) {
     <div class="fg"><label>Titre</label><input id="aaTitle" placeholder="Titre de l'article"></div>
     <div class="fg"><label>Description</label><textarea id="aaDesc" placeholder="Détail de l'article..."></textarea></div>
     <div class="fg"><label>Sanction applicable</label><input id="aaSanc" placeholder="Ex: Amende $5,000 + prison"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');c.articles.push({ref:document.getElementById('aaRef').value||'ART-?',title:document.getElementById('aaTitle').value||'Nouvel article',desc:document.getElementById('aaDesc').value||'—',sanction:document.getElementById('aaSanc').value||'—'});closeModal();markDirty('legal_codes');toast('Article ajouté');goGov('gcodes')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');c.articles.push({ref:document.getElementById('aaRef').value||'ART-?',title:document.getElementById('aaTitle').value||'Nouvel article',desc:document.getElementById('aaDesc').value||'—',sanction:document.getElementById('aaSanc').value||'—'});closeModal();toast('Article ajouté');goGov('gcodes')">Ajouter</button></div>`);
 }
 
 function modalEditArticle(codeId, artIdx) {
@@ -4340,7 +3699,7 @@ function modalEditArticle(codeId, artIdx) {
     <div class="fg"><label>Titre</label><input id="eaTitle" value="${a.title}"></div>
     <div class="fg"><label>Description</label><textarea id="eaDesc">${a.desc}</textarea></div>
     <div class="fg"><label>Sanction</label><input id="eaSanc" value="${a.sanction}"></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');const art=c.articles[${artIdx}];art.ref=document.getElementById('eaRef').value;art.title=document.getElementById('eaTitle').value;art.desc=document.getElementById('eaDesc').value;art.sanction=document.getElementById('eaSanc').value;closeModal();markDirty('legal_codes');toast('Article mis à jour');goGov('gcodes')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="const c=DB.legalCodes.find(x=>x.id==='${codeId}');const art=c.articles[${artIdx}];art.ref=document.getElementById('eaRef').value;art.title=document.getElementById('eaTitle').value;art.desc=document.getElementById('eaDesc').value;art.sanction=document.getElementById('eaSanc').value;closeModal();toast('Article mis à jour');goGov('gcodes')">Sauvegarder</button></div>`);
 }
 
 // ============ GOV: DEFCON ============
@@ -4379,7 +3738,7 @@ function modalEditProtos(level) {
   const protos = DB.defconProtos[level] || [];
   modal(`<div class="modal-t">✏️ Protocoles — Niveau ${level}</div>
     <div class="fg"><label>Protocoles (un par ligne)</label><textarea id="protoEdit" rows="8" style="font-size:.85rem">${protos.join('\n')}</textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="DB.defconProtos[${level}]=document.getElementById('protoEdit').value.split('\\n').filter(function(l){return l.trim()});markDirty('defcon_state');closeModal();toast('Protocoles niveau ${level} mis à jour');goGov('gdefcon')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="DB.defconProtos[${level}]=document.getElementById('protoEdit').value.split('\\n').filter(function(l){return l.trim()});closeModal();toast('Protocoles niveau ${level} mis à jour');goGov('gdefcon')">Sauvegarder</button></div>`);
 }
 function changeDefcon(n) {
   if (n === DB.defcon) return;
@@ -4394,7 +3753,6 @@ function doChangeDefcon(n) {
   DB.defconLog.unshift({ date: new Date().toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}), from: DB.defcon, to: n, reason: reason, author: DB.govUser.name });
   if (DB.defconLog.length > 10) DB.defconLog.length = 10; // Max 10
   DB.defcon = n;
-  markDirty('defcon_state');
   closeModal();
   toast('DEFCON passé au niveau ' + n);
   goGov('gdefcon');
@@ -4424,7 +3782,7 @@ function gVault() {
           <div style="font-size:.7rem;color:var(--t3);margin-top:.2rem">Créé le ${d.date} — ${pageCount} page${pageCount>1?'s':''}</div>
         </div>
         <span class="badge ${classColor}">${d.classification}</span>
-        <button class="btn btn-sm btn-red" onclick="event.stopPropagation();DB.vault.splice(${i},1);markDirty('vault');toast('Dossier supprimé');goGov('gvault')" style="padding:.25rem .4rem">🗑️</button>
+        <button class="btn btn-sm btn-red" onclick="event.stopPropagation();DB.vault.splice(${i},1);toast('Dossier supprimé');goGov('gvault')" style="padding:.25rem .4rem">🗑️</button>
       </div>
     </div>`;
   });
@@ -4475,7 +3833,7 @@ function gVaultDetail(idx) {
       <div style="display:flex;gap:.2rem">
         <button class="btn btn-sm btn-blue" onclick="DB._vaultRead=${pi};goGov('gvault')" title="Lire">👁️</button>
         <button class="btn btn-sm btn-outline" onclick="modalEditPage(${idx},${pi})" title="Modifier">✏️</button>
-        <button class="btn btn-sm btn-red" onclick="DB.vault[${idx}].pages.splice(${pi},1);markDirty('vault');toast('Page supprimée');goGov('gvault')" style="padding:.2rem .4rem">✕</button>
+        <button class="btn btn-sm btn-red" onclick="DB.vault[${idx}].pages.splice(${pi},1);toast('Page supprimée');goGov('gvault')" style="padding:.2rem .4rem">✕</button>
       </div>
     </div>`;
   });
@@ -4488,7 +3846,7 @@ function modalAddDossier() {
     <div class="fg"><label>Nom du dossier</label><input id="vdName" placeholder="Ex: Opération Tempête"></div>
     <div class="fg"><label>Description / Notes</label><textarea id="vdNotes" rows="3" placeholder="Description du contenu..."></textarea></div>
     <div class="fg"><label>Classification</label><select id="vdClass"><option>Restreint</option><option>Confidentiel</option><option>Secret Défense</option></select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('vdName').value||'Nouveau Dossier';DB.vault.push({name:n,notes:document.getElementById('vdNotes').value||'',classification:document.getElementById('vdClass').value,date:new Date().toLocaleDateString('fr-FR'),pages:[]});closeModal();markDirty('vault');toast(n+' créé');goGov('gvault')">Créer</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="const n=document.getElementById('vdName').value||'Nouveau Dossier';DB.vault.push({name:n,notes:document.getElementById('vdNotes').value||'',classification:document.getElementById('vdClass').value,date:new Date().toLocaleDateString('fr-FR'),pages:[]});closeModal();toast(n+' créé');goGov('gvault')">Créer</button></div>`);
 }
 
 function modalEditDossier(idx) {
@@ -4497,7 +3855,7 @@ function modalEditDossier(idx) {
     <div class="fg"><label>Nom</label><input id="edName" value="${d.name}"></div>
     <div class="fg"><label>Description</label><textarea id="edNotes" rows="3">${d.notes||''}</textarea></div>
     <div class="fg"><label>Classification</label><select id="edClass"><option ${d.classification==='Restreint'?'selected':''}>Restreint</option><option ${d.classification==='Confidentiel'?'selected':''}>Confidentiel</option><option ${d.classification==='Secret Défense'?'selected':''}>Secret Défense</option></select></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var dd=DB.vault[${idx}];dd.name=document.getElementById('edName').value;dd.notes=document.getElementById('edNotes').value;dd.classification=document.getElementById('edClass').value;closeModal();markDirty('vault');toast('Dossier mis à jour');goGov('gvault')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var dd=DB.vault[${idx}];dd.name=document.getElementById('edName').value;dd.notes=document.getElementById('edNotes').value;dd.classification=document.getElementById('edClass').value;closeModal();toast('Dossier mis à jour');goGov('gvault')">Sauvegarder</button></div>`);
 }
 
 function modalAddPage(dossierIdx) {
@@ -4505,7 +3863,7 @@ function modalAddPage(dossierIdx) {
     <div class="fg"><label>Titre</label><input id="vpTitle" placeholder="Ex: Rapport d'enquête #1"></div>
     <div class="fg"><label>Auteur</label><input id="vpAuthor" value="${DB.govUser?DB.govUser.name:''}"></div>
     <div class="fg"><label>Contenu</label><textarea id="vpContent" rows="10" placeholder="Rédigez le contenu du document..."></textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.vault[${dossierIdx}].pages.push({title:document.getElementById('vpTitle').value||'Page',author:document.getElementById('vpAuthor').value||'—',content:document.getElementById('vpContent').value||'',date:new Date().toLocaleDateString('fr-FR')});closeModal();markDirty('vault');toast('Page ajoutée');goGov('gvault')">Ajouter</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-green" onclick="DB.vault[${dossierIdx}].pages.push({title:document.getElementById('vpTitle').value||'Page',author:document.getElementById('vpAuthor').value||'—',content:document.getElementById('vpContent').value||'',date:new Date().toLocaleDateString('fr-FR')});closeModal();toast('Page ajoutée');goGov('gvault')">Ajouter</button></div>`);
 }
 
 function modalEditPage(dossierIdx, pageIdx) {
@@ -4513,7 +3871,7 @@ function modalEditPage(dossierIdx, pageIdx) {
   modal(`<div class="modal-t">✏️ Modifier — ${p.title}</div>
     <div class="fg"><label>Titre</label><input id="epTitle" value="${p.title}"></div>
     <div class="fg"><label>Contenu</label><textarea id="epContent" rows="10">${p.content}</textarea></div>
-    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var pp=DB.vault[${dossierIdx}].pages[${pageIdx}];pp.title=document.getElementById('epTitle').value;pp.content=document.getElementById('epContent').value;closeModal();markDirty('vault');toast('Page mise à jour');goGov('gvault')">Sauvegarder</button></div>`);
+    <div class="modal-acts"><button class="btn btn-sm btn-outline" onclick="closeModal()">Annuler</button><button class="btn btn-sm btn-blue" onclick="var pp=DB.vault[${dossierIdx}].pages[${pageIdx}];pp.title=document.getElementById('epTitle').value;pp.content=document.getElementById('epContent').value;closeModal();toast('Page mise à jour');goGov('gvault')">Sauvegarder</button></div>`);
 }
 
 // ============ GOV: VOTES / LOIS ============
@@ -4546,8 +3904,8 @@ function gVotes() {
         <div style="flex:1"><strong style="font-size:.9rem">${isMulti?'🗳️':'📜'} ${l.title}</strong> <span class="badge ${l.status==='open'?'b-green':'b-red'}">${l.status==='open'?'Ouvert':'Terminé'}</span>
         <span style="font-size:.72rem;color:var(--t3);margin-left:.5rem">${totalVotes} votes</span></div>
         <div style="display:flex;gap:.3rem">
-          ${l.status==='open'?`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='closed';markDirty('laws');toast('Vote fermé');goGov('gvotes')">Fermer</button>`:`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='open';markDirty('laws');toast('Vote réouvert');goGov('gvotes')">Réouvrir</button>`}
-          <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);markDirty('laws');toast('Vote supprimé');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
+          ${l.status==='open'?`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='closed';toast('Vote fermé');goGov('gvotes')">Fermer</button>`:`<button class="btn btn-sm btn-outline" onclick="DB.laws[${i}].status='open';toast('Vote réouvert');goGov('gvotes')">Réouvrir</button>`}
+          <button class="btn btn-sm btn-red" onclick="DB.laws.splice(${i},1);toast('Vote supprimé');goGov('gvotes')" style="padding:.25rem .4rem">✕</button>
         </div>
       </div>`;
 
@@ -4603,28 +3961,25 @@ function createVote() {
   document.getElementById('lvTitle').value = '';
   document.getElementById('lvDesc').value = '';
   document.getElementById('lvChoices').value = '';
-  markDirty('laws');
   toast('Vote soumis aux citoyens');
   goGov('gvotes');
 }
-
-
 
 // ============ INIT ============
 (async function() {
   var statusEl = document.getElementById('connStatus');
   if (statusEl) statusEl.innerHTML = '⏳ Connexion à Supabase...';
 
-  // 1. CHARGER DEPUIS LES TABLES SUPABASE INDIVIDUELLES
+  // 1. CHARGER DEPUIS SUPABASE — SEULE SOURCE DE DONNÉES
   var loaded = false;
   var retries = 0;
   while (!loaded && retries < 3) {
     try {
       loaded = await Promise.race([
         loadFromSupabase(),
-        new Promise(function(r) { setTimeout(function() { r(false); }, 8000); })
+        new Promise(function(r) { setTimeout(function() { r(false); }, 5000); })
       ]);
-    } catch(e) { console.error('Load attempt failed:', e); }
+    } catch(e) {}
     if (!loaded) {
       retries++;
       if (statusEl) statusEl.innerHTML = '⏳ Tentative ' + (retries+1) + '/3...';
@@ -4633,55 +3988,28 @@ function createVote() {
   }
 
   if (loaded) {
-    console.log('☁️ Données chargées depuis Supabase (tables individuelles)');
+    console.log('☁️ Données chargées depuis Supabase');
     updateSyncBadge('ok');
   }
 
-  // 2. Si Supabase inaccessible → écran d'erreur
+  // 2. Si Supabase inaccessible après 3 tentatives → écran d'erreur
   if (!loaded && !_supabaseOK) {
     if (statusEl) statusEl.innerHTML = '🔴 Impossible de se connecter à Supabase';
     document.getElementById('auth').innerHTML = '<div style="text-align:center;padding:3rem 1.5rem;max-width:400px;margin:0 auto"><div style="font-size:3rem;margin-bottom:1rem">🔴</div><h2 style="color:var(--red);margin-bottom:.5rem">Serveur indisponible</h2><p style="color:var(--t3);margin-bottom:1.5rem;font-size:.9rem">Impossible de se connecter à la base de données.<br>Vérifiez votre connexion internet et réessayez.</p><button onclick="location.reload()" style="background:var(--accent);color:#fff;border:none;padding:.7rem 2rem;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer">🔄 RÉESSAYER</button></div>';
     return;
   }
 
-  // 3. Si tables vides → première initialisation avec entreprises par défaut
-  if (!loaded || DB.enterprises.length === 0) {
-    // Créer les entreprises de San Andreas
-    var defaultEnts = [
-      {id:'ENT-001', name:'Gouvernement', icon:'🏛️', type:'Gouvernement'},
-      {id:'ENT-002', name:'LSPD', icon:'🚔', type:'LSPD'},
-      {id:'ENT-003', name:'SAMS', icon:'🚑', type:'SAMS'},
-      {id:'ENT-004', name:'Burger Shot', icon:'🍔', type:'Restauration'},
-      {id:'ENT-005', name:'Sterling & Associés', icon:'⚖️', type:'Avocat'},
-      {id:'ENT-006', name:'Dynasty', icon:'🏠', type:'Immobilier'},
-      {id:'ENT-007', name:'CM Mecano', icon:'🔧', type:'Mécanique'},
-      {id:'ENT-008', name:'Auto Exotic', icon:'🏎️', type:'Mécanique'},
-      {id:'ENT-009', name:'LTD Little Seoul', icon:'🏪', type:'Superette'},
-      {id:'ENT-010', name:'LTD Mirror Park', icon:'🏪', type:'Superette'},
-      {id:'ENT-011', name:'Tequilala', icon:'🍸', type:'Bar / Club'},
-      {id:'ENT-012', name:'Bahamas', icon:'🎵', type:'Divertissement'},
-      {id:'ENT-013', name:'Downtown Cab Co', icon:'🚕', type:'Transport'},
-      {id:'ENT-014', name:'Weazel News', icon:'📺', type:'Média'},
-    ];
-    defaultEnts.forEach(function(e) {
-      DB.enterprises.push({id:e.id, name:e.name, icon:e.icon, type:e.type, patron:'', patronId:'', status:'active', created:new Date().toLocaleDateString('fr-FR'), employees:0});
-      createEnterpriseData(e.name, e.icon, e.type);
-    });
+  // 3. Si Supabase est vide → première initialisation
+  if (!loaded) {
     initAllJobs();
-    markDirty('enterprises','enterprise_data','gov_budget','tax_config','defcon_state');
-    await flushDirty();
-    console.log('🆕 Première initialisation — ' + defaultEnts.length + ' entreprises créées');
+    saveDB();
+    console.log('🆕 Première initialisation');
   }
 
-  // 4. S'assurer que allJobs est initialisé pour les entreprises existantes
-  DB.enterprises.forEach(function(ent) {
-    if (!DB.allJobs[ent.name]) createEnterpriseData(ent.name, ent.icon, ent.type);
-  });
-
-  // 5. Démarrer le polling temps réel
+  // 4. Démarrer le polling temps réel
   try { setupRealtime(); } catch(e) {}
 
-  // 6. Auto-restore session (sa_session = identifiant seulement)
+  // 5. Auto-restore session (sa_session dans localStorage = identifiant seulement)
   var session = null;
   try { session = JSON.parse(localStorage.getItem('sa_session')); } catch(e) {}
   if (session) {
@@ -4689,7 +4017,7 @@ function createVote() {
       var cit = DB.citizens.find(function(c){return c.id===session.id});
       if (cit) {
         DB.user = {id:cit.id, name:cit.name, phone:cit.phone};
-        _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+        _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         loadJob();
         document.getElementById('auth').classList.add('hide');
         document.getElementById('app').classList.add('on');
@@ -4703,7 +4031,7 @@ function createVote() {
       var govAcc = DB.govAccounts ? DB.govAccounts.find(function(a){return a.id===session.id}) : null;
       if (govAcc) {
         DB.govUser = {id:govAcc.id, name:session.name||govAcc.name};
-        _notifCounts = {msg: countMyUnread(), ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
+        _notifCounts = {msg: DB.messages?DB.messages.length:0, ann: DB.announcements?DB.announcements.length:0, dec: DB.decrees?DB.decrees.length:0};
         document.getElementById('auth').classList.add('hide');
         document.getElementById('govApp').classList.add('on');
         var gini = (session.name||govAcc.name).split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
@@ -4714,11 +4042,10 @@ function createVote() {
     }
   }
 
-  // 7. Ready
-  if (statusEl) statusEl.innerHTML = '\u{1F7E2} ' + DB.citizens.length + ' citoyens \u2014 ' + DB.enterprises.length + ' entreprises \u2014 Tables individuelles';
-  console.log('\u{1F3DB}\u{FE0F} San Andreas prêt \u2014 ' + DB.citizens.length + ' citoyens (architecture par tables)');
+  // 6. Ready
+  if (statusEl) statusEl.innerHTML = '\u{1F7E2} ' + DB.citizens.length + ' citoyens \u2014 ' + DB.enterprises.length + ' entreprises';
+  console.log('\u{1F3DB}\u{FE0F} San Andreas pr\u00EAt \u2014 ' + DB.citizens.length + ' citoyens');
 })();
-
 </script>
 </body>
 </html>
