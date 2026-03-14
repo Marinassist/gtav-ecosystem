@@ -132,12 +132,7 @@ function doCheckout() {
     date: new Date().toLocaleDateString('fr-FR'),
     time: new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})
   };
-  j.invoices.unshift(inv);
-// Dans js/work.js — fonction doCheckout(), après j.invoices.unshift(inv);
-
-  j.invoices.unshift(inv);
-
-  // AJOUTER CETTE LIGNE — la vente entre dans le solde du compte
+ j.invoices.unshift(inv);
   j.bankBalance = (j.bankBalance || 0) + sub;
   // Auto-create current week entry if missing
   var weekLabel = 'Sem. ' + getWeekNumber(new Date()) + ' (' + new Date().getFullYear() + ')';
