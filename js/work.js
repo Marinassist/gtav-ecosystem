@@ -386,8 +386,7 @@ function pWCompta() {
   h += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">';
   h += '<div><div style="font-size:.7rem;color:var(--t3);text-transform:uppercase;letter-spacing:1px">Solde du Compte</div>';
   h += '<div style="font-family:Rajdhani,sans-serif;font-size:2.5rem;font-weight:700;color:' + (j.bankBalance >= 0 ? 'var(--gold)' : 'var(--red)') + '">$' + j.bankBalance.toLocaleString() + '</div></div>';
-  h += '<div style="display:flex;gap:.3rem"><button class="btn btn-sm btn-green" onclick="modalBankOp(\'depot\')">+ Dépôt</button><button class="btn btn-sm btn-red" onclick="modalBankOp(\'retrait\')">- Retrait</button><button class="btn btn-sm btn-outline" onclick="modalSetBalance()">Ajuster</button></div>';
-  h += '</div></div>';
+h += '<div style="display:flex;gap:.3rem"><button class="btn btn-sm btn-green" onclick="modalBankOp(\'depot\')">+ Dépôt</button><button class="btn btn-sm btn-red" onclick="modalBankOp(\'retrait\')">- Retrait</button><button class="btn btn-sm btn-outline" onclick="modalSetBalance()">Ajuster</button><button class="btn btn-sm btn-outline" style="border-color:rgba(239,68,68,.3);color:var(--red)" onclick="resetCompta()">🗑️ Reset Compta</button></div>';  h += '</div></div>';
 
   h += '<div class="stats">';
   h += '<div class="stat"><div class="stat-l">CA Semaine</div><div class="stat-v" style="color:var(--green)">$' + totalCA.toLocaleString() + '</div><div class="stat-s">' + j.invoices.length + ' factures</div></div>';
@@ -1502,4 +1501,19 @@ function acceptApp(idx) {
   DB.job.pendingApps.splice(idx, 1);
   toast(a.name + ' embauché !'); buildNav(); go('wapps');
 }
-
+function resetCompta() {
+  confirmDel('Remettre toute la comptabilité à zéro ? (solde, factures, historique, semaines)', function(){
+    var j = DB.job;
+    j.bankBalance = 0;
+    j.invoices = [];
+    j.comptaHistory = [];
+    j.comptaWeeks = [];
+    j.weeklyHistory = [];
+    j.companyExpenses = [];
+    j.employeeExpenses = [];
+    j.taxDeclarations = [];
+    saveDB();
+    toast('Comptabilité remise à zéro');
+    go('wcompta');
+  });
+}
